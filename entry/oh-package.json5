@@ -1,0 +1,16 @@
+{
+  "name": "entry",
+  "version": "1.0.0",
+  "description": "entry module",
+  "main": "",
+  "author": "",
+  "license": "",
+  "dependencies": {
+    "libaurorabench.so": "file:./src/main/cpp/types/libaurorabench",
+    "libauroragpu.so": "file:./src/main/cpp/types/libauroragpu",
+    "libauroragpu7.so": "file:./src/main/cpp/types/libauroragpu7",
+    "libaurorasn.so": "file:./src/main/cpp/types/libaurorasn",
+    // 参考对照 / 两份报告对比(compareReports) —— 只读纯计算模块, 类型声明在 cpp/types/libauroraref/
+    "libauroraref.so": "file:./src/main/cpp/types/libauroraref"
+  }
+}

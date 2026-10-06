@@ -1,0 +1,90 @@
+// 逐点写入的 pass 使用的顶点着色器(真实位置在片元里由 gl_VertexID 算)
+const char* kPointVS = R"GLSL(#version 300 es
+layout(location = 0) in vec2 aPos;
+out vec2 vUV;
+void main() {
+    vUV = aPos * 0.5 + 0.5;
+    gl_PointSize = 1.0;
+    gl_Position = vec4(aPos, 0.0, 1.0);
+}
+)GLSL";
+
+// LK 累加: 累加 [gx^2, gx*gy, gy^2, err](加法混合写入 8x8 累加器)
+const char* FS_FT_ACC = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uCurr;
+uniform sampler2D uPrev;
+uniform vec2 uSeed;
+uniform vec2 uLevelSize;
+uniform vec2 uLevelTexel;
+uniform vec2 uDisp;
+void main() {
+    float fi = float(gl_VertexID);
+    float j = mod(fi, uSeed.x);
+    float i = floor(fi / uSeed.x);
+    vec2 uv = (vec2(j, i) + 0.5) / uLevelSize;
+    vec2 t = uLevelTexel;
+    float tl = texture(uCurr, uv - vec2(t.x, 0.0)).r;
+    float tr = texture(uCurr, uv + vec2(t.x, 0.0)).r;
+    float tb = texture(uCurr, uv - vec2(0.0, t.y)).r;
+    float tt = texture(uCurr, uv + vec2(0.0, t.y)).r;
+    float gx = (tr - tl) * 0.5;
+    float gy = (tt - tb) * 0.5;
+    vec2 p = uv + uDisp;
+    float pr = texture(uPrev, p + vec2(t.x, 0.0)).r;
+    float pl = texture(uPrev, p - vec2(t.x, 0.0)).r;
+    float pu = texture(uPrev, p + vec2(0.0, t.y)).r;
+    float pd = texture(uPrev, p - vec2(0.0, t.y)).r;
+    float pgx = (pr - pl) * 0.5;
+    float pgy = (pu - pd) * 0.5;
+    float ic = texture(uPrev, p).r;
+    float err = texture(uCurr, uv).r - ic;
+    // curr 的梯度与 prev 的梯度在这里被一起用到, 保证两次采样都参与运算
+    float gxc = (gx + pgx) * 0.5;
+    float gyc = (gy + pgy) * 0.5;
+    fragColor = vec4(gxc * gxc, gxc * gyc, gyc * gyc, err);
+}
+)GLSL";
+
+// 64 路归约 + 求解 2x2 线性系统, 输出新的位移估计
+const char* FS_FT_UPDATE = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uAcc;
+uniform vec2 uDisp;
+uniform float uIter;
+void main() {
+    float s0 = 0.0;
+    float s1 = 0.0;
+    float s2 = 0.0;
+    float s3 = 0.0;
+    for (int y = 0; y < 8; y++) {
+        for (int x = 0; x < 8; x++) {
+            vec4 a = texelFetch(uAcc, ivec2(x, y), 0);
+            s0 += a.x;
+            s1 += a.y;
+            s2 += a.z;
+            s3 += a.w;
+        }
+    }
+    s0 = s0 / 64.0 + 0.001;
+    s1 = s1 / 64.0;
+    s2 = s2 / 64.0 + 0.001;
+    s3 = s3 / 64.0;
+    float det = s0 * s2 - s1 * s1;
+    if (abs(det) < 0.00002) {
+        det = (det < 0.0) ? -0.00002 : 0.00002;
+    }
+    vec2 rhs = vec2(-(s2 * s1 - s1 * s3), -(s0 * s3 - s1 * s1)) / det;
+    float len = length(rhs);
+    if (len > 3.0) {
+        rhs = rhs * (3.0 / len);
+    }
+    vec2 nd = uDisp + rhs * 0.6;
+    nd = clamp(nd, vec2(-0.05), vec2(0.05));
+    fragColor = vec4(nd, abs(s3), 1.0);
+}
+)GLSL";

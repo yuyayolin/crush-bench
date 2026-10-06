@@ -1,0 +1,879 @@
+====================================================================================================
+[1] 标定后数据规模(从源码重新解析, 与代码里的常量逐条核对)
+====================================================================================================
+  Text Processing    gb7_batch2.cpp       const size_t pageSize =  = 1024 * 1024 期望 1048576    PASS  [每页字节数]
+  Text Processing    gb7_batch2.cpp       const int pages = (\d+); = 224        期望 224        PASS  [页数(192 页实测 1572.9 ms -> 224 页预计 1835 ms)]
+  Asset Compression  gb7_batch2.cpp       const int texW = (\d+);  = 4096       期望 4096       PASS  [纹理边长-单核&多核(4096 实测 3289.2 ms; 已由 3584/5120 还原为 4096)]
+  Asset Compression  gb7_batch2.cpp       const int texH = (texW); = texW       期望 None       PASS  [纹理高 = 宽(正方形)]
+  Navigation         gb7_batch2.cpp       makeMap\((\d+), (\d+), 9 = 544        期望 544        PASS  [大地图 544x544(本轮实测 2142.8 ms, 已在区间内, 未改)]
+  Photo Library      gb7_batch3.cpp       const int w = (\d+);     = 1024       期望 1024       PASS  [照片宽(第1处)]
+  Photo Library      gb7_batch3.cpp       const int photos = (\d+) = 10         期望 10         PASS  [照片数(真机 7 张 1291.9 ms / 12 张 3375.1 ms -> 反推每张成本(非线性), 10 张预计 2.44~2.54 s)]
+  Photo Editor       gb7_batch3.cpp       const int photos = (\d+) = 4          期望 4          PASS  [照片数(2026-10-06 第五次复核: 悬崖已证伪 —— 单张真实成本 ≈800 ms, 与多核 9 线程 112~137 ms/张 x 每核效率 0.61 互相印证; 4 张 ≈3.2 s, 每张工作量未改)]
+  HDR                gb7_batch3.cpp       const int w = (\d+);\s*/ = 1536       期望 1536       PASS  [输出宽-单核&多核(1536 实测 3380.2 ms; 已由 1296/2592 还原为 1536)]
+  HDR                gb7_batch3.cpp       const int h = (\d+);\s*/ = 832        期望 832        PASS  [输出高-单核&多核(已由 704/1408 还原为 832)]
+  Ray Tracer         gb7_batch3.cpp       const int samples = (\d+ = 8          期望 8          PASS  [每像素采样数-单核&多核(384x384x8 实测 6191.7 ms; 已由 3/6 还原为 8)]
+  Game Physics       gb7_batch3.cpp       const int steps = (\d+); = 190        期望 190        PASS  [步数(本轮实测 2113.2 ms, 已在区间内, 未改)]
+  Video Encoder      gb7_video.cpp        const int kVEncFrameCoun = 5          期望 5          PASS  [编码器帧数(5 帧实测 4310.5 ms; 已由 3 还原为 5)]
+  Video Decoder      gb7_video.cpp        const int kVFrameCount4  = 5          期望 5          PASS  [解码器帧数(未改: 2 passes x 5 帧 = 10 帧-遍; 6.2 的 1681.2 ms 经 metric x ms = 9.25 Mpx 证明 10/10 帧-遍跑满 —— 掉档不在解码循环, 见 o.diag 自证字段)]
+  Audio Encoder      gb7_audio.cpp        const int totalFrames =  = 88000      期望 88000      PASS  [编码样本数(48000 样本/11 块实测 1261.1 ms -> 88000 样本/21 块预计 2408 ms)]
+  PDF Viewer         gb7_pdf.cpp          const int kPageCount = ( = 6          期望 6          PASS  [页数(4 页实测 1460.1 ms -> 6 页预计 2190 ms)]
+  HTML5 Browser      gb7_browser.cpp      const int kFixedPages =  = 80         期望 80         PASS  [整页渲染轮数(56 页实测 1630.0 ms -> 80 页预计 2329 ms)]
+  SfM                gb7_sfm.cpp          constexpr int    kMaxFea = 560        期望 560        PASS  [每图特征数(560 实测 3713.8 ms; 已由 380 还原为 560)]
+  Clang              gb7_clang.cpp        const double kTargetMs = = 2200.0     期望 2200.0     PASS  [计时目标(ms); 注意本轮真机 0/33 轮编译成功, 见报告]
+
+====================================================================================================
+[2] 固定容量数组 vs 最大索引表达式 逐条核对(容量 / 索引上界 / 结论)
+====================================================================================================
+
+--- gb7_filecompress.cpp ---
+  [PASS] Sha1::w[80]                            容量=80               索引上界=i<80 (line 75..80)                                   块内 16->80 字扩展, 写读均为常量循环上界
+  [PASS] Sha1::buf[64]                          容量=64               索引上界=bufLen<64 (line 99..105)                             update() 逐字节推进, 满 64 立即 block+清零
+  [PASS] out[bound]                             容量=LZ4_compressBound(in) 索引上界=n<=bound                                             输出缓冲按 compressBound 分配
+  [PASS] outs[slot]                             容量=useThreads 个槽    索引上界=slot 来自 freeSlots 池                                  池大小 = useThreads, 取一还一
+
+--- gb7_batch2.cpp ---
+  [PASS] MapGraph::cost[w*h]                    容量=160*160 / 544*544 索引上界=v=vy*w+vx, vx<w, vy<h                                大地图 640->896->544 后仍按 w*h 分配并夹取边界
+  [PASS] dist[w*h]                              容量=n=w*h            索引上界=u=sy*w+sx (起终点已夹取), v 同 cost                         与 cost 同尺寸, 索引同源
+  [PASS] results[24]                            容量=24 条路线           索引上界=r<24                                                 任务数未变
+  [PASS] text[pageSize*pages]                   容量=1 MiB * 224      索引上界=i<text.size(), 且 i+len+2<size 才 memcpy               语料 8MiB->192MiB->224MiB 是同一缓冲, 生成时有边界检查
+  [PASS] partial[pages]                         容量=224              索引上界=s 为任务区间起点, s<pages                                   槽位随页数一起增长(128->192->224), 未写死
+  [PASS] tex[texW*texH*4]                       容量=4096*4096*4 (单核与多核同尺寸) 索引上界=idx=((y*w+x)*4), x<texW,y<texH                       纹理 2048->4096->3584/5120 后已还原为 4096(单核与多核同尺寸), 仍按 texW/texH 计算, 无写死
+  [PASS] tex 块读 idx+c                           容量=同上               索引上界=by<blocksY, bx<blocksX, py,px<4                      块坐标由 texW/texH 推导, 无 2048 假设
+  [PASS] partial[blocksY]                       容量=1024 (=4096/4, 单核与多核同尺寸) 索引上界=rs 为块行区间起点                                           槽位随块行数增长(还原后 1024)
+
+--- gb7_batch3.cpp ---
+  [PASS] img[w*h*3]                             容量=1024*768*3 / 3000*2000*3 索引上界=idx=((y*w+x)*3), x<w,y<h                             按 w/h 分配
+  [PASS] decoded[idx..idx+2]                    容量=dw*dh*3 (解码器输出)  索引上界=y+=4,x+=4 的采样点                                       潜在越界读: dw/dh 不被 4 整除时 x+3/y+3 会越过行尾 -> 已加 dw>=4&&dh>=4 的前置守卫(不改口径)
+  [PASS] photoAcc[photos]                       容量=10               索引上界=p<photos                                             槽位随张数增长(3->7->12->10), 数组尺寸跟着旋钮走
+  [PASS] work[w*h*3]                            容量=3000*2000*3      索引上界=i=((y*w+x)*3)+c, c<3                                 按 w/h 分配
+  [PASS] rowAcc[h]                              容量=2000             索引上界=y<h                                                  按 h 分配, 按行写
+  [PASS] hdr/ldr[w*h*3]                         容量=1536*832*3 (单核与多核同尺寸) 索引上界=idx=((y*w+x)*3)+c                                    按 w/h 分配(还原后 1536x832, 多核不再 x2)
+  [PASS] out[w*h*3]                             容量=384*384*3        索引上界=idx=((y*w+x)*3)+c                                    分辨率固定 384x384; 采样数 24->14->8 只影响循环次数, 不参与索引
+  [PASS] spheres[6]                             容量=6                索引上界=k<6, hit<6                                           采样数变化不引入除零(samples>=1 且 8!=0)
+  [PASS] head[64^3]                             容量=262144           索引上界=cellIdx=(cz*g+cy)*g+cx, cx..cz 已夹取到 [0,g-1]          网格与步数无关
+  [PASS] next[n]                                容量=8192             索引上界=i<n                                                  刚体数未变
+
+--- gb7_pdf.cpp ---
+  [PASS] kGlyphBits[47][7]                      容量=47*7             索引上界=glyphIndex() 返回 [0,46]                               查表先线性搜索, 未命中返回 0
+  [PASS] kWords[]/kWordCount                    容量=sizeof/sizeof    索引上界=xsPdf()%kWordCount                                   上界由 sizeof 推导
+  [PASS] genLine out[cap]                       容量=cap=62/160       索引上界=len<cap-1 才写, 结束 out[len]=0                          每处写入前都有 len<cap-1 或 len+N<cap 检查
+  [PASS] PdfWriter::off[16]                     容量=16               索引上界=objBegin 有 (size_t)num<off.size() 检查                 检查在写入前
+  [PASS] objOff[64]                             容量=64               索引上界=onum>0 && onum<objOff.size()                         xref 与 obj 扫描两处都有检查
+  [PASS] PathB::xy                              容量=kMaxPathPts=400000 点 索引上界=moveTo/lineTo 每次先判 xy.size()/2>=kMaxPathPts          超限置 overflow, 后续全部早退
+  [PASS] REdge edges                            容量=kMaxEdges=600000 索引上界=addEdge 先判 edges.size()>=kMaxEdges                   超限丢弃该边(不写越界)
+  [PASS] Raster::cov[kPgW]                      容量=1275             索引上界=x∈[tmin,tmax]⊆[cx0,ibMax], ibMax=cx1-1<=kPgW-1       kPgW 未改动; 页数 2->4->6 不影响
+  [PASS] Raster::pix[kPgW*kPgH*3]               容量=1275*1650*3      索引上界=idx=((row*kPgW)+x)*3+c, row<=kPgH-1, x<=ibMax        页数只决定渲染几页, 缓冲尺寸不变
+  [PASS] PdfDrawOp pts/subs                     容量=动态 vector        索引上界=recordFill 用 insert/push_back                        动态增长, 无固定容量
+  [PASS] ks[256] (pdf)                          容量=-                索引上界=无此数组                                                 -
+  [PASS] freeWorkers                            容量=parThreads 个 worker 索引上界=gb7ParallelFor 并发 body 数 <= parThreads               不变式成立; 已加防御性空池检查(见报告 2.3)
+
+--- gb7_audio.cpp ---
+  [PASS] kSinSizeA4+1 表                         容量=8193             索引上界=idx=kSinMaskA4<=8191, 读 idx+1<=8192                  表尾多 1 个元素用于线性插值
+  [PASS] ks[256]                                容量=256              索引上界=parts=1<<partOrder<=256                              bestPartitionsA4 里 parts>256 即 break
+  [PASS] lpc[16]/ac[16]/q[16]                   容量=16               索引上界=order<=kMaxLpcOrderA4=12                             固定预测器 0..4 与 LPC 1..12 都在 16 以内
+  [PASS] BestSubA4::coeff[16]                   容量=16               索引上界=order<=12                                            同上
+  [PASS] blockBuf[2][4096]                      容量=2*4096           索引上界=i<kBlockSizeA4                                       块大小常量未改
+  [PASS] pcm[totalFrames*channels]              容量=352000           索引上界=idx=((blk*4096+i)*2)+1, blk<blocks=21                60s->1s->88000 样本后 blocks=21, 最大下标 < 176000 < 176001
+  [PASS] scratch[kBlockSizeA4]                  容量=4096             索引上界=i<n=4096                                             writeSubframeA4 内 resize(n) 后只写 [order,n)
+  [PASS] frameBytes[blocks]                     容量=11               索引上界=blk<blocks                                           动态 vector, 每帧一个
+  [PASS] scratchSamples[4096]                   容量=4096             索引上界=checkSubframeA4(n=4096)                              自检路径
+
+--- gb7_video.cpp ---
+  [PASS] HuffTableV4::len/code[128]             容量=128              索引上界=下标 = 符号 < n(121 / 13)                                表项数与符号数一致, 有 --Wall 下的数组边界检查
+  [PASS] buildHuffV4 weight/parent[280]         容量=280              索引上界=nodes<maxNodes=280                                   合并循环上界即容量
+  [PASS] kDctBasis4[8][8]                       容量=8*8              索引上界=u,v,y,x<8                                            常量
+  [PASS] kQuantTable4[32]                       容量=32               索引上界=quantScaleV4 先把 qp 夹到 [0,31]                         检查在索引前
+  [PASS] kZigzag4[64]                           容量=64               索引上界=i<64 / pos<=63                                       readCoefBlockV4 有 pos>63 早退
+  [PASS] resid/recon/coef[64]                   容量=64               索引上界=i<64                                                 宏块内常量
+  [PASS] MbStoreV4::coef[3600*6*64]             容量=1382400          索引上界=block(mbIdx<3600, slot<6)                            宏块数未变(分辨率未变)
+  [PASS] refY/recY[kVLumaSize4]                 容量=921600           索引上界=运动补偿前 clampVecV4 夹取, 色度单独夹取                          编码器 5 帧/解码器 5 帧都不影响缓冲尺寸(缓冲只分配一次并逐帧复用)
+  [PASS] BitWriterV4 buf (4 MiB)                容量=4*1024*1024      索引上界=writeBits 逐位判 byteIdx>=buf.size() 置 over             固定容量但每次访问都查界, 溢出只置标志(调用方 break)
+  [PASS] BitReaderV4                            容量=受 len*8 限制       索引上界=readBits 先判 bitPos+bits>len*8                        越界返回 false, 由调用方处理
+
+--- gb7_browser.cpp ---
+  [PASS] PageSlot::fb[1024*768]                 容量=786432           索引上界=所有写入都经 fbBlend/fbFill, 逐坐标夹取到 [0,w)x[0,h)            帧缓冲尺寸未改
+  [PASS] nm[kMaxTagName+1]                      容量=25               索引上界=nl<kMaxTagName 才自增, nm[nl]=0                         容量 = 上限+1, 含结束符
+  [PASS] an[kMaxTagName+1]                      容量=25               索引上界=同上                                                   -
+  [PASS] av[kMaxAttrVal+1]                      容量=161              索引上界=avl<kMaxAttrVal 才自增, av[avl]=0                       -
+  [PASS] cls[40]/idb[32]/sty[200]               容量=40/32/200        索引上界=cn 先夹到 kMaxX-1 再 memcpy(cn)+写 0                      每个都留了结束符位置
+  [PASS] Compound::cls[40]/id[32]               容量=40/32            索引上界=len>kMaxX-1 直接 return false                          -
+  [PASS] buf[24] (margin/padding 名)             容量=24               索引上界=bl+sl+1>sizeof(buf) 则 continue                       检查在 memcpy 前
+  [PASS] kFont5x7[95][7]                        容量=95*7             索引上界=gi=(int)ch-32, 仅当 32<ch<127                          gi 落在 [1,94]
+  [PASS] curOk/nxt/chain[kMaxDepth+4]           容量=68               索引上界=L<kCap=kMaxDepth+4                                   向上遍历祖先时受 kCap 限制
+  [PASS] parseStack vector                      容量=kMaxDepth+2 预留   索引上界=push 前判 stack.size()<kMaxDepth                       vector 动态增长, reserve 只是预留
+
+--- gb7_sfm.cpp ---
+  [PASS] HarrisWorkspace 各图级缓冲                  容量=W*H              索引上界=base=y*W+x, x<W,y<H                                  分辨率未改
+  [PASS] grid[gw*gh]                            容量=107*80           索引上界=gx=px/cell<gw, gy<gh, 索引前判 xx/yy 范围                  -
+  [PASS] fs.desc[n*4]                           容量=n<=kMaxFeat      索引上界=i<nFeat                                              特征数 900->560->380->560(已还原) 后缓冲随 fs.n 分配
+  [PASS] fs.angle[n]                            容量=n<=560           索引上界=i<nFeat                                              曾经是空 vector(写空指针解引用), 已修复为 angle.assign(n)
+  [PASS] RansacWorkspace Mb[81]/evb[9]/evcb[81] 容量=81/9/81          索引上界=9x9 矩阵                                               常量
+  [PASS] p1/p2/P1/P2[12] (PnP)                  容量=12               索引上界=3x4                                                  常量
+  [PASS] parent/used[nNodes=10*kMaxFeat]        容量=5600             索引上界=na=ia*kMaxFeat+a, a<kMaxFeat=560                     索引空间随 kMaxFeat 一起变(还原后 10*560=5600)
+  [PASS] pattern[kDescBits*4]                   容量=1024             索引上界=i<256, k<4                                           常量
+
+--- gb7_clang.cpp ---
+  [PASS] aurora_pool[262144]                    容量=262144           索引上界=aurora_pool_alloc 先判 used+aligned>POOL_BYTES 返回 0    失败返回 0, 调用方判空
+  [PASS] keys/values[k07_SLOTS=64]              容量=64               索引上界=hash&(SLOTS-1)                                       掩码保证不越界
+  [PASS] scoped/alloc 相关栈数组                     容量=各生成单元内常量         索引上界=均在函数内以常量上界循环                                         生成器模板, 与标定无关
+
+====================================================================================================
+[3] 索引写入点扫描(辅助人工核对: 文件里每处 name[...] = ... 都出现在上面结论里)
+====================================================================================================
+  gb7_filecompress.cpp   索引写入点  17 处
+      gb7_filecompress.cpp:199: h[0] = 0x67452301u;
+      gb7_filecompress.cpp:200: h[1] = 0xEFCDAB89u;
+      gb7_filecompress.cpp:201: h[2] = 0x98BADCFEu;
+      gb7_filecompress.cpp:202: h[3] = 0x10325476u;
+      gb7_filecompress.cpp:203: h[4] = 0xC3D2E1F0u;
+      gb7_filecompress.cpp:214: w[i] = ((uint32_t)p[i * 4] << 24) | ((uint32_t)p[i * 4 + 1] << 16) |
+      gb7_filecompress.cpp:218: w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+      gb7_filecompress.cpp:230: h[0] += a; h[1] += b; h[2] += c; h[3] += d; h[4] += e;
+      gb7_filecompress.cpp:258: out[i * 4] = (uint8_t)(h[i] >> 24);
+      gb7_filecompress.cpp:259: out[i * 4 + 1] = (uint8_t)(h[i] >> 16);
+      gb7_filecompress.cpp:260: out[i * 4 + 2] = (uint8_t)(h[i] >> 8);
+      gb7_filecompress.cpp:261: out[i * 4 + 3] = (uint8_t)h[i];
+      gb7_filecompress.cpp:300: const char* keywords[10] = {"static", "struct", "const", "return", "void", "int",
+      gb7_filecompress.cpp:329: const char* words[12] = {"the", "and", "of", "to", "in", "a", "that", "is", "for",
+      gb7_filecompress.cpp:485: taskSha[(size_t)k] = h;
+      gb7_filecompress.cpp:486: taskCompSize[(size_t)k] = (uint64_t)cLen;
+      gb7_filecompress.cpp:487: taskOk[(size_t)k] = (ok && h == archives[ai].sha1) ? 1u : 0u;
+  gb7_batch2.cpp         索引写入点  33 处
+      gb7_batch2.cpp:113: g.cost[i] = c;
+      gb7_batch2.cpp:126: dist[(size_t)start] = 0;
+      gb7_batch2.cpp:141: const int dx[4] = {1, -1, 0, 0};
+      gb7_batch2.cpp:142: const int dy[4] = {0, 0, 1, -1};
+      gb7_batch2.cpp:156: dist[(size_t)v] = nd;
+      gb7_batch2.cpp:211: results[(size_t)r] = dijkstra(small, sx, sy, tx, ty);
+      gb7_batch2.cpp:218: results[(size_t)r] = dijkstra(big, sx, sy, tx, ty);
+      gb7_batch2.cpp:388: key[i] = 0;
+      gb7_batch2.cpp:389: cnt[i] = 0;
+      gb7_batch2.cpp:402: key[i] = h;
+      gb7_batch2.cpp:403: cnt[i] = 1;
+      gb7_batch2.cpp:431: const char* words[16] = {"alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta",
+      gb7_batch2.cpp:444: text[i++] = (r & 7) == 0 ? (uint8_t)'.' : (uint8_t)' ';
+      gb7_batch2.cpp:544: partial[(size_t)s] = local;
+      gb7_batch2.cpp:675: tex[idx] = (uint8_t)((x * 255 / texW + (r & 31)) & 0xFF);
+      gb7_batch2.cpp:676: tex[idx + 1] = (uint8_t)((y * 255 / texH + ((r >> 5) & 31)) & 0xFF);
+      gb7_batch2.cpp:677: tex[idx + 2] = (uint8_t)(((x ^ y) + ((r >> 10) & 63)) & 0xFF);
+      gb7_batch2.cpp:678: tex[idx + 3] = 255;
+      gb7_batch2.cpp:708: R[t] = (float)tex[idx];
+      gb7_batch2.cpp:709: G[t] = (float)tex[idx + 1];
+      gb7_batch2.cpp:710: B[t] = (float)tex[idx + 2];
+      gb7_batch2.cpp:742: float e0[3] = {R[imax], G[imax], B[imax]};
+      gb7_batch2.cpp:743: float e1[3] = {R[imin], G[imin], B[imin]};
+      gb7_batch2.cpp:746: e0[0] = e1[0] = mr; e0[1] = e1[1] = mg; e0[2] = e1[2] = mb;
+      gb7_batch2.cpp:750: int bestE0[3] = {(int)e0[0], (int)e0[1], (int)e0[2]};
+      gb7_batch2.cpp:751: int bestE1[3] = {(int)e1[0], (int)e1[1], (int)e1[2]};
+      gb7_batch2.cpp:754: const int e0i[3] = {(int)e0[0], (int)e0[1], (int)e0[2]};
+      gb7_batch2.cpp:755: const int e1i[3] = {(int)e1[0], (int)e1[1], (int)e1[2]};
+      gb7_batch2.cpp:757: palR[0] = e0i[0]; palG[0] = e0i[1]; palB[0] = e0i[2];
+      gb7_batch2.cpp:758: palR[1] = e1i[0]; palG[1] = e1i[1]; palB[1] = e1i[2];
+      gb7_batch2.cpp:759: palR[2] = (e0i[0] * 2 + e1i[0]) / 3; palG[2] = (e0i[1] * 2 + e1i[1]) / 3; palB[2] = (e0i[2] * 2 + e1i[2]) / 3;
+      gb7_batch2.cpp:760: palR[3] = (e0i[0] + e1i[0] * 2) / 3; palG[3] = (e0i[1] + e1i[1] * 2) / 3; palB[3] = (e0i[2] + e1i[2] * 2) / 3;
+      gb7_batch2.cpp:800: partial[(size_t)rs] = acc;
+  gb7_batch3.cpp         索引写入点  91 处
+      gb7_batch3.cpp:56: img[idx] = (uint8_t)(v0 < 0 ? 0 : (v0 > 1 ? 255 : (int)(v0 * 255.0f)));
+      gb7_batch3.cpp:57: img[idx + 1] = (uint8_t)(v1 < 0 ? 0 : (v1 > 1 ? 255 : (int)(v1 * 255.0f)));
+      gb7_batch3.cpp:58: img[idx + 2] = (uint8_t)(v2 < 0 ? 0 : (v2 > 1 ? 255 : (int)(v2 * 255.0f)));
+      gb7_batch3.cpp:181: decoded[idx] = (uint8_t)v;
+      gb7_batch3.cpp:186: photoAcc[(size_t)p] = pacc;   // 每张照片写自己的槽, 无共享累加
+      gb7_batch3.cpp:338: work[i] = (uint8_t)(r < 0 ? 0 : (r > 255 ? 255 : (int)r));
+      gb7_batch3.cpp:339: work[i + 1] = (uint8_t)(g < 0 ? 0 : (g > 255 ? 255 : (int)g));
+      gb7_batch3.cpp:340: work[i + 2] = (uint8_t)(b < 0 ? 0 : (b > 255 ? 255 : (int)b));
+      gb7_batch3.cpp:356: work[i] = (uint8_t)(sr > 255 ? 255 : sr);
+      gb7_batch3.cpp:357: work[i + 1] = (uint8_t)(sg > 255 ? 255 : sg);
+      gb7_batch3.cpp:358: work[i + 2] = (uint8_t)(sb > 255 ? 255 : sb);
+      gb7_batch3.cpp:377: rowAcc[(size_t)y] = local;
+      gb7_batch3.cpp:520: srcEv[(size_t)k] = ev;
+      gb7_batch3.cpp:537: img[idx] = (uint8_t)(v0 < 0.0f ? 0 : (v0 > 1.0f ? 255 : (int)(v0 * 255.0f)));
+      gb7_batch3.cpp:538: img[idx + 1] = (uint8_t)(v1 < 0.0f ? 0 : (v1 > 1.0f ? 255 : (int)(v1 * 255.0f)));
+      gb7_batch3.cpp:539: img[idx + 2] = (uint8_t)(v2 < 0.0f ? 0 : (v2 > 1.0f ? 255 : (int)(v2 * 255.0f)));
+      gb7_batch3.cpp:549: gammaLut[i] = std::pow((float)i / 255.0f, 1.0f / 2.2f);
+      gb7_batch3.cpp:585: lum[k] = sum / 9.0f;
+      gb7_batch3.cpp:586: con[k] = std::sqrt(gx * gx + gy * gy);
+      gb7_batch3.cpp:619: const float ch[3] = {acc0 / wsum, acc1 / wsum, acc2 / wsum};
+      gb7_batch3.cpp:633: ldr[oidx + (size_t)c] = (uint8_t)outv;
+      gb7_batch3.cpp:637: rowAcc[(size_t)y] = acc;
+      gb7_batch3.cpp:757: const Sphere spheres[kSphereCount] = {
+      gb7_batch3.cpp:768: const Box boxes[kBoxCount] = {
+      gb7_batch3.cpp:854: hit.n[0] = (ro[0] + rd[0] * t - s.x) * inv;
+      gb7_batch3.cpp:855: hit.n[1] = (ro[1] + rd[1] * t - s.y) * inv;
+      gb7_batch3.cpp:856: hit.n[2] = (ro[2] + rd[2] * t - s.z) * inv;
+      gb7_batch3.cpp:857: hit.alb[0] = s.cr; hit.alb[1] = s.cg; hit.alb[2] = s.cb;
+      gb7_batch3.cpp:860: hit.emi[0] = s.cr * e; hit.emi[1] = s.cg * e; hit.emi[2] = s.cb * e;
+      gb7_batch3.cpp:873: hit.n[0] = 0.0f; hit.n[1] = 0.0f; hit.n[2] = 0.0f;
+      gb7_batch3.cpp:880: hit.alb[0] = b.cr; hit.alb[1] = b.cg; hit.alb[2] = b.cb;
+      gb7_batch3.cpp:881: hit.emi[0] = 0.0f; hit.emi[1] = 0.0f; hit.emi[2] = 0.0f;
+      gb7_batch3.cpp:894: b0[0] = ty * n[2] - tz * n[1];
+      gb7_batch3.cpp:895: b0[1] = tz * n[0] - tx * n[2];
+      gb7_batch3.cpp:896: b0[2] = tx * n[1] - ty * n[0];
+      gb7_batch3.cpp:900: b1[0] = n[1] * b0[2] - n[2] * b0[1];
+      gb7_batch3.cpp:901: b1[1] = n[2] * b0[0] - n[0] * b0[2];
+      gb7_batch3.cpp:902: b1[2] = n[0] * b0[1] - n[1] * b0[0];
+      gb7_batch3.cpp:906: out[0] = cx * b0[0] + cy * b1[0] + cz * n[0];
+      gb7_batch3.cpp:907: out[1] = cx * b0[1] + cy * b1[1] + cz * n[1];
+      gb7_batch3.cpp:908: out[2] = cx * b0[2] + cy * b1[2] + cz * n[2];
+      gb7_batch3.cpp:916: float ro[3] = {origin[0], origin[1], origin[2]};
+      gb7_batch3.cpp:917: float rd[3] = {dir[0], dir[1], dir[2]};
+      gb7_batch3.cpp:922: float thr[3] = {1.0f, 1.0f, 1.0f};
+      gb7_batch3.cpp:923: acc[0] = 0.0f; acc[1] = 0.0f; acc[2] = 0.0f;
+      gb7_batch3.cpp:927: acc[0] += thr[0] * 0.020f;
+      gb7_batch3.cpp:928: acc[1] += thr[1] * 0.025f;
+      gb7_batch3.cpp:929: acc[2] += thr[2] * 0.040f;
+      gb7_batch3.cpp:932: acc[0] += thr[0] * hit.emi[0];
+      gb7_batch3.cpp:933: acc[1] += thr[1] * hit.emi[1];
+      gb7_batch3.cpp:934: acc[2] += thr[2] * hit.emi[2];
+      gb7_batch3.cpp:943: rd[0] -= 2.0f * d * hit.n[0];
+      gb7_batch3.cpp:944: rd[1] -= 2.0f * d * hit.n[1];
+      gb7_batch3.cpp:945: rd[2] -= 2.0f * d * hit.n[2];
+      gb7_batch3.cpp:949: rd[0] += j1 * 0.05f; rd[1] += j2 * 0.05f; rd[2] += j3 * 0.05f;
+      gb7_batch3.cpp:955: float nrm[3] = {hit.n[0], hit.n[1], hit.n[2]};
+      gb7_batch3.cpp:963: rd[0] -= 2.0f * d2 * nrm[0];
+      gb7_batch3.cpp:964: rd[1] -= 2.0f * d2 * nrm[1];
+      gb7_batch3.cpp:965: rd[2] -= 2.0f * d2 * nrm[2];
+      gb7_batch3.cpp:968: rd[0] = eta * rd[0] + cc * nrm[0];
+      gb7_batch3.cpp:969: rd[1] = eta * rd[1] + cc * nrm[1];
+      gb7_batch3.cpp:970: rd[2] = eta * rd[2] + cc * nrm[2];
+      gb7_batch3.cpp:980: const float ldir[3] = {lx / ld, ly / ld, lz / ld};
+      gb7_batch3.cpp:983: const float sho[3] = {px, py, pz};
+      gb7_batch3.cpp:990: acc[0] += thr[0] * hit.alb[0] * 9.0f * f;
+      gb7_batch3.cpp:991: acc[1] += thr[1] * hit.alb[1] * 8.6f * f;
+      gb7_batch3.cpp:992: acc[2] += thr[2] * hit.alb[2] * 7.6f * f;
+      gb7_batch3.cpp:1001: ro[0] = px + hit.n[0] * 1e-3f;
+      gb7_batch3.cpp:1002: ro[1] = py + hit.n[1] * 1e-3f;
+      gb7_batch3.cpp:1003: ro[2] = pz + hit.n[2] * 1e-3f;
+      gb7_batch3.cpp:1025: float acc[3] = {0.0f, 0.0f, 0.0f};
+      gb7_batch3.cpp:1031: const float org[3] = {sx * 0.5f, sy * 0.5f, 0.0f};
+      gb7_batch3.cpp:1032: const float dir[3] = {sx, sy, -1.0f};
+      gb7_batch3.cpp:1035: acc[0] += one[0]; acc[1] += one[1]; acc[2] += one[2];
+      gb7_batch3.cpp:1043: out[idx + c] = (uint8_t)(v > 1.0f ? 255 : (int)(v * 255.0f));
+      gb7_batch3.cpp:1144: px[(size_t)i] = (float)((int)(xsB3(s) % 2000) - 1000) * 0.01f;
+      gb7_batch3.cpp:1145: py[(size_t)i] = (float)((int)(xsB3(s) % 1000)) * 0.01f + 1.0f;
+      gb7_batch3.cpp:1146: pz[(size_t)i] = (float)((int)(xsB3(s) % 2000) - 1000) * 0.01f;
+      gb7_batch3.cpp:1169: next[(size_t)i] = head[(size_t)cellIdx];
+      gb7_batch3.cpp:1170: head[(size_t)cellIdx] = i;
+      gb7_batch3.cpp:1173: vy[(size_t)i] -= 9.81f * 0.016f;
+      gb7_batch3.cpp:1195: vx[(size_t)i] += nx * pen * 4.0f;
+      gb7_batch3.cpp:1196: vy[(size_t)i] += ny * pen * 4.0f;
+      gb7_batch3.cpp:1197: vz[(size_t)i] += nz * pen * 4.0f;
+      gb7_batch3.cpp:1198: vx[(size_t)j] -= nx * pen * 4.0f;
+      gb7_batch3.cpp:1199: vy[(size_t)j] -= ny * pen * 4.0f;
+      gb7_batch3.cpp:1200: vz[(size_t)j] -= nz * pen * 4.0f;
+      gb7_batch3.cpp:1203: px[(size_t)i] += vx[(size_t)i] * 0.016f;
+      gb7_batch3.cpp:1204: py[(size_t)i] += vy[(size_t)i] * 0.016f;
+      gb7_batch3.cpp:1205: pz[(size_t)i] += vz[(size_t)i] * 0.016f;
+      gb7_batch3.cpp:1207: py[(size_t)i] = 0.0f;
+  gb7_pdf.cpp            索引写入点 110 处
+      gb7_pdf.cpp:274: out[--len] = '\0';
+      gb7_pdf.cpp:277: out[--len] = '\0';
+      gb7_pdf.cpp:280: out[0] = '0';
+      gb7_pdf.cpp:281: out[1] = '\0';
+      gb7_pdf.cpp:288: const char kGlyphChars[] = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:-/%()!?";
+      gb7_pdf.cpp:456: const char* const kWords[] = {
+      gb7_pdf.cpp:467: const char kPunct[] = ".,:-";
+      gb7_pdf.cpp:474: out[0] = '\0';
+      gb7_pdf.cpp:486: out[len++] = ' ';
+      gb7_pdf.cpp:489: out[len++] = w[i];
+      gb7_pdf.cpp:494: out[len++] = (char)('0' + (int)(xsPdf(rnd) % 10u));
+      gb7_pdf.cpp:498: out[len++] = kPunct[xsPdf(rnd) % 4u];
+      gb7_pdf.cpp:507: out[len] = '\0';
+      gb7_pdf.cpp:521: off[(size_t)num] = s.size();
+      gb7_pdf.cpp:1157: buf[k++] = (char)e;
+      gb7_pdf.cpp:1166: buf[k] = '\0';
+      gb7_pdf.cpp:1385: objOff[(size_t)onum] = (size_t)clampd(o1.num, 0.0, (double)n);
+      gb7_pdf.cpp:1440: objOff[(size_t)num] = j;
+      gb7_pdf.cpp:1916: clip[0] = 0.0;
+      gb7_pdf.cpp:1917: clip[1] = 0.0;
+      gb7_pdf.cpp:1918: clip[2] = (double)kPgW;
+      gb7_pdf.cpp:1919: clip[3] = (double)kPgH;
+      gb7_pdf.cpp:1945: clip[0] = 0.0;
+      gb7_pdf.cpp:1946: clip[1] = 0.0;
+      gb7_pdf.cpp:1947: clip[2] = (double)kPgW;
+      gb7_pdf.cpp:1948: clip[3] = (double)kPgH;
+      gb7_pdf.cpp:1953: clip[0] = clampd(c[0], 0.0, (double)kPgW);
+      gb7_pdf.cpp:1954: clip[1] = clampd(c[1], 0.0, (double)kPgH);
+      gb7_pdf.cpp:1955: clip[2] = clampd(c[2], 0.0, (double)kPgW);
+      gb7_pdf.cpp:1956: clip[3] = clampd(c[3], 0.0, (double)kPgH);
+      gb7_pdf.cpp:2031: P[idx] = (uint8_t)(fr + 0.5f);
+      gb7_pdf.cpp:2032: P[idx + 1] = (uint8_t)(fg + 0.5f);
+      gb7_pdf.cpp:2033: P[idx + 2] = (uint8_t)(fb + 0.5f);
+      gb7_pdf.cpp:2037: P[idx] = (uint8_t)((float)P[idx] * inv + fr * a + 0.5f);
+      gb7_pdf.cpp:2038: P[idx + 1] = (uint8_t)((float)P[idx + 1] * inv + fg * a + 0.5f);
+      gb7_pdf.cpp:2039: P[idx + 2] = (uint8_t)((float)P[idx + 2] * inv + fb * a + 0.5f);
+      gb7_pdf.cpp:2136: order[i] = (int)i;
+      gb7_pdf.cpp:2158: active[w++] = active[i];
+      gb7_pdf.cpp:2204: cov[(size_t)ia] += (float)(xb - xa);
+      gb7_pdf.cpp:2206: cov[(size_t)ia] += (float)((double)(ia + 1) - xa);
+      gb7_pdf.cpp:2208: cov[(size_t)k] += 1.0f;
+      gb7_pdf.cpp:2210: cov[(size_t)ib] += (float)(xb - (double)ib);
+      gb7_pdf.cpp:2231: cov[(size_t)x] = 0.0f;
+      gb7_pdf.cpp:2260: op.col[0] = col[0];
+      gb7_pdf.cpp:2261: op.col[1] = col[1];
+      gb7_pdf.cpp:2262: op.col[2] = col[2];
+      gb7_pdf.cpp:2266: op.clip[i] = clip[i];
+      gb7_pdf.cpp:2450: w.clip[0] = op.clip[0];
+      gb7_pdf.cpp:2451: w.clip[1] = (op.clip[1] > lo) ? op.clip[1] : lo;
+      gb7_pdf.cpp:2452: w.clip[2] = op.clip[2];
+      gb7_pdf.cpp:2453: w.clip[3] = (op.clip[3] < hi) ? op.clip[3] : hi;
+      gb7_pdf.cpp:2478: m[0] = 1.0;
+      gb7_pdf.cpp:2479: m[1] = 0.0;
+      gb7_pdf.cpp:2480: m[2] = 0.0;
+      gb7_pdf.cpp:2481: m[3] = 1.0;
+      gb7_pdf.cpp:2482: m[4] = 0.0;
+      gb7_pdf.cpp:2483: m[5] = 0.0;
+      gb7_pdf.cpp:2495: out[0] = a;
+      gb7_pdf.cpp:2496: out[1] = b;
+      gb7_pdf.cpp:2497: out[2] = c;
+      gb7_pdf.cpp:2498: out[3] = d;
+      gb7_pdf.cpp:2499: out[4] = e;
+      gb7_pdf.cpp:2500: out[5] = f;
+      gb7_pdf.cpp:2596: gs.ctm[0] = kPtToDev;
+      gb7_pdf.cpp:2597: gs.ctm[1] = 0.0;
+      gb7_pdf.cpp:2598: gs.ctm[2] = 0.0;
+      gb7_pdf.cpp:2599: gs.ctm[3] = -kPtToDev;
+      gb7_pdf.cpp:2600: gs.ctm[4] = 0.0;
+      gb7_pdf.cpp:2601: gs.ctm[5] = kPgHpt * kPtToDev;
+      gb7_pdf.cpp:2602: gs.fill[0] = 0.0;
+      gb7_pdf.cpp:2603: gs.fill[1] = 0.0;
+      gb7_pdf.cpp:2604: gs.fill[2] = 0.0;
+      gb7_pdf.cpp:2605: gs.stroke[0] = 0.0;
+      gb7_pdf.cpp:2606: gs.stroke[1] = 0.0;
+      gb7_pdf.cpp:2607: gs.stroke[2] = 0.0;
+      gb7_pdf.cpp:2617: gs.clip[0] = 0.0;
+      gb7_pdf.cpp:2618: gs.clip[1] = 0.0;
+      gb7_pdf.cpp:2619: gs.clip[2] = (double)kPgW;
+      gb7_pdf.cpp:2620: gs.clip[3] = (double)kPgH;
+      gb7_pdf.cpp:2652: gs.clip[2] = gs.clip[0];
+      gb7_pdf.cpp:2653: gs.clip[3] = gs.clip[1];
+      gb7_pdf.cpp:2681: gs.clip[0] = clampd(x0, 0.0, (double)kPgW);
+      gb7_pdf.cpp:2684: gs.clip[1] = clampd(y0, 0.0, (double)kPgH);
+      gb7_pdf.cpp:2687: gs.clip[2] = clampd(x1, 0.0, (double)kPgW);
+      gb7_pdf.cpp:2690: gs.clip[3] = clampd(y1, 0.0, (double)kPgH);
+      gb7_pdf.cpp:2693: gs.clip[2] = gs.clip[0];
+      gb7_pdf.cpp:2696: gs.clip[3] = gs.clip[1];
+      gb7_pdf.cpp:2752: double tr[6] = {1.0, 0.0, 0.0, 1.0, tx, 0.0};
+      gb7_pdf.cpp:2756: gs.tm[k] = out[k];
+      gb7_pdf.cpp:2763: double tr[6] = {1.0, 0.0, 0.0, 1.0, t, 0.0};
+      gb7_pdf.cpp:2767: gs.tm[k] = out[k];
+      gb7_pdf.cpp:2773: double m[6] = {1.0, 0.0, 0.0, 1.0, tx, ty};
+      gb7_pdf.cpp:2777: gs.lm[i] = out[i];
+      gb7_pdf.cpp:2778: gs.tm[i] = out[i];
+      gb7_pdf.cpp:2814: m[i] = nums[nums.size() - 6 + (size_t)i];
+      gb7_pdf.cpp:2819: gs.ctm[i] = out[i];
+      gb7_pdf.cpp:2833: gs.fill[0] = clampd(num(2), 0.0, 1.0);
+      gb7_pdf.cpp:2834: gs.fill[1] = clampd(num(1), 0.0, 1.0);
+      gb7_pdf.cpp:2835: gs.fill[2] = clampd(num(0), 0.0, 1.0);
+      gb7_pdf.cpp:2839: gs.stroke[0] = clampd(num(2), 0.0, 1.0);
+      gb7_pdf.cpp:2840: gs.stroke[1] = clampd(num(1), 0.0, 1.0);
+      gb7_pdf.cpp:2841: gs.stroke[2] = clampd(num(0), 0.0, 1.0);
+      gb7_pdf.cpp:2847: c[0] = v;
+      gb7_pdf.cpp:2848: c[1] = v;
+      gb7_pdf.cpp:2849: c[2] = v;
+      gb7_pdf.cpp:2858: c[0] = (1.0 - cc) * (1.0 - kk);
+      gb7_pdf.cpp:2859: c[1] = (1.0 - mm) * (1.0 - kk);
+      gb7_pdf.cpp:2860: c[2] = (1.0 - yy) * (1.0 - kk);
+      gb7_pdf.cpp:3032: gs.tm[i] = v;
+      gb7_pdf.cpp:3033: gs.lm[i] = v;
+  gb7_audio.cpp          索引写入点  37 处
+      gb7_audio.cpp:156: buf[n - 2] = (uint8_t)(v >> 8);
+      gb7_audio.cpp:157: buf[n - 1] = (uint8_t)(v & 0xFFu);
+      gb7_audio.cpp:178: tbl[(size_t)i] = (float)std::sin(ph);
+      gb7_audio.cpp:206: static const int scale[8] = {0, 3, 5, 7, 5, 3, 7, 10};  // 半音
+      gb7_audio.cpp:210: float noiseLp[2] = {0.0f, 0.0f};
+      gb7_audio.cpp:212: uint32_t noisePhase[2] = {0x12345678u, 0x9ABCDEF0u};
+      gb7_audio.cpp:219: const double harmInc[3] = {1.0, 2.0, 3.0};
+      gb7_audio.cpp:220: const double harmAmp[3] = {0.62, 0.30, 0.16};
+      gb7_audio.cpp:255: noiseLp[c] = noiseLp[c] * 0.72f + white * 0.28f;
+      gb7_audio.cpp:260: noisePhase[c] += (c == 0 ? 0x51E2A3B4u : 0x2C7F19D3u);
+      gb7_audio.cpp:269: pcm[(size_t)n * 2u + (size_t)c] = (int16_t)(v >= 0.0 ? (int)(v + 0.5) : -(int)(-v + 0.5));
+      gb7_audio.cpp:359: ks[p] = k;
+      gb7_audio.cpp:392: lpc[i] = k;
+      gb7_audio.cpp:395: lpc[j] = tmp - k * lpc[i - 1 - j];
+      gb7_audio.cpp:396: lpc[i - 1 - j] = lpc[i - 1 - j] - k * tmp;
+      gb7_audio.cpp:400: lpc[mid] = lpc[mid] * (1.0 - k);
+      gb7_audio.cpp:407: outLpc[i] = lpc[i];
+      gb7_audio.cpp:436: q[i] = (int32_t)(v >= 0.0 ? (int)(v + 0.5) : -(int)(-v + 0.5));
+      gb7_audio.cpp:512: ac[i] = s;
+      gb7_audio.cpp:523: res[(size_t)i] = r;
+      gb7_audio.cpp:581: scratch[(size_t)i] = (int64_t)b[i] - lpcPredictA4(best.coeff, order, b, i, sh);
+      gb7_audio.cpp:705: ks[p] = (int)k;
+      gb7_audio.cpp:718: out[idx++] = (int16_t)r;
+      gb7_audio.cpp:746: out[i] = (int16_t)((int32_t)(v << (32 - bps)) >> (32 - bps));
+      gb7_audio.cpp:756: out[i] = (int16_t)((int32_t)(v << (32 - bps)) >> (32 - bps));
+      gb7_audio.cpp:773: out[i] = (int16_t)s;
+      gb7_audio.cpp:783: out[i] = (int16_t)((int32_t)(v << (32 - bps)) >> (32 - bps));
+      gb7_audio.cpp:794: coef[i] = (int32_t)((int64_t)(v << (64 - bits)) >> (64 - bits));
+      gb7_audio.cpp:803: out[i] = (int16_t)s;
+      gb7_audio.cpp:875: static const uint8_t kMagic[4] = {0x66u, 0x4Cu, 0x61u, 0x43u}; // "fLaC"
+      gb7_audio.cpp:880: si[0] = 0x00; // last-metadata-block = 1, type = 0 (STREAMINFO)
+      gb7_audio.cpp:881: si[3] = 34;   // 元数据长度
+      gb7_audio.cpp:882: si[4] = (uint8_t)(kBlockSizeA4 >> 8);
+      gb7_audio.cpp:883: si[5] = (uint8_t)(kBlockSizeA4 & 0xFF);
+      gb7_audio.cpp:884: si[6] = (uint8_t)(kBlockSizeA4 >> 8);
+      gb7_audio.cpp:885: si[7] = (uint8_t)(kBlockSizeA4 & 0xFF);
+      gb7_audio.cpp:893: si[8 + i] = (uint8_t)((packed >> (56 - 8 * i)) & 0xFFu);
+  gb7_video.cpp          索引写入点  39 处
+      gb7_video.cpp:186: buf[byteIdx] = (uint8_t)(buf[byteIdx] | (uint8_t)(0x80u >> (bitPos & 7u)));
+      gb7_video.cpp:340: weight[nodes] = weight[a] + weight[b];
+      gb7_video.cpp:341: parent[a] = nodes;
+      gb7_video.cpp:342: parent[b] = nodes;
+      gb7_video.cpp:352: t->len[i] = (uint8_t)depth;
+      gb7_video.cpp:369: nextCode[0] = 0;
+      gb7_video.cpp:373: nextCode[l] = code;
+      gb7_video.cpp:378: t->code[s] = nextCode[l];
+      gb7_video.cpp:413: fastSym[w] = 0;
+      gb7_video.cpp:414: fastLen[w] = 0;
+      gb7_video.cpp:419: fastSym[w] = (uint8_t)s;
+      gb7_video.cpp:420: fastLen[w] = (uint8_t)l;
+      gb7_video.cpp:483: static const int freqLevel[kLevelCountV4] = {
+      gb7_video.cpp:501: static const int freqMv[kMvCountV4] = {1400, 700, 320, 160, 90, 55, 34, 22, 14, 9, 6, 4, 3};
+      gb7_video.cpp:505: gDecLevelV4.len[i] = gHuffLevelV4.len[i];
+      gb7_video.cpp:506: gDecLevelV4.code[i] = gHuffLevelV4.code[i];
+      gb7_video.cpp:509: gDecMvV4.len[i] = gHuffMvV4.len[i];
+      gb7_video.cpp:510: gDecMvV4.code[i] = gHuffMvV4.code[i];
+      gb7_video.cpp:547: tmp[(size_t)u * 8u + (size_t)y] = acc;
+      gb7_video.cpp:558: out[(size_t)u * 8u + (size_t)v] = (int32_t)acc;
+      gb7_video.cpp:571: tmp[(size_t)y * 8u + (size_t)v] = acc;
+      gb7_video.cpp:582: dst[(size_t)y * (size_t)stride + (size_t)x] = (int16_t)acc;
+      gb7_video.cpp:588: const int32_t kQuantTable4[32] = {
+      gb7_video.cpp:600: static const int kZigzag4[64] = {
+      gb7_video.cpp:624: coefOut[i] = qc;
+      gb7_video.cpp:625: deq[i] = qc * qs;
+      gb7_video.cpp:753: lumaNoise[i] = (uint8_t)(s & 0x3Fu); // 0..63 的纹理
+      gb7_video.cpp:761: chromaNoise[i] = (uint8_t)(s & 0x0Fu);
+      gb7_video.cpp:828: row[px] = (uint8_t)(val + 0.5f);
+      gb7_video.cpp:846: ur[px] = (uint8_t)(cu + 0.5f);
+      gb7_video.cpp:847: vr[px] = (uint8_t)(cv + 0.5f);
+      gb7_video.cpp:879: static const int kDx[4] = {1, -1, 0, 0};
+      gb7_video.cpp:880: static const int kDy[4] = {0, 0, 1, -1};
+      gb7_video.cpp:941: dst[(size_t)yy * (size_t)stride + (size_t)xx] = (uint8_t)val;
+      gb7_video.cpp:955: dst[(size_t)yy * (size_t)stride + (size_t)xx] = (uint8_t)val;
+      gb7_video.cpp:1038: resid[(size_t)yy * 8u + (size_t)xx] =
+      gb7_video.cpp:1050: rec[(size_t)yy * (size_t)kVW4 + (size_t)xx] = (uint8_t)val;
+      gb7_video.cpp:1062: resid[(size_t)yy * 8u + (size_t)xx] =
+      gb7_video.cpp:1074: rec[(size_t)yy * (size_t)kVCW4 + (size_t)xx] = (uint8_t)val;
+  gb7_browser.cpp        索引写入点  45 处
+      gb7_browser.cpp:163: static const uint16_t kCharAdv[95] = {
+      gb7_browser.cpp:288: row[xx] = col;
+      gb7_browser.cpp:316: static const char* const kTagNames[TAG_COUNT] = {
+      gb7_browser.cpp:483: static const Ent kEnts[] = {
+      gb7_browser.cpp:514: buf[out++] = ch;
+      gb7_browser.cpp:519: buf[out++] = s[i++];
+      gb7_browser.cpp:596: nm[nl] = 0;
+      gb7_browser.cpp:611: nm[nl] = 0;
+      gb7_browser.cpp:626: cls[0] = 0;
+      gb7_browser.cpp:627: idb[0] = 0;
+      gb7_browser.cpp:628: sty[0] = 0;
+      gb7_browser.cpp:645: an[anl] = 0;
+      gb7_browser.cpp:649: av[0] = 0;
+      gb7_browser.cpp:666: av[avl] = 0;
+      gb7_browser.cpp:675: cls[cn] = 0;
+      gb7_browser.cpp:681: idb[cn] = 0;
+      gb7_browser.cpp:687: sty[cn] = 0;
+      gb7_browser.cpp:815: neg = (s[i] == '-');
+      gb7_browser.cpp:866: static const NamedColor kNamedColors[] = {
+      gb7_browser.cpp:930: bool isPct = (p < e && s[p] == '%');
+      gb7_browser.cpp:932: comp[cnt] = v;
+      gb7_browser.cpp:933: pct[cnt] = isPct;
+      gb7_browser.cpp:959: nm[ln++] = lowerCh(s[k]);
+      gb7_browser.cpp:961: nm[ln] = 0;
+      gb7_browser.cpp:1004: vals[cnt++] = f;
+      gb7_browser.cpp:1016: out[0] = t;
+      gb7_browser.cpp:1017: out[1] = r;
+      gb7_browser.cpp:1018: out[2] = b;
+      gb7_browser.cpp:1019: out[3] = l;
+      gb7_browser.cpp:1079: static const char* const kSide[4] = {"-top", "-right", "-bottom", "-left"};
+      gb7_browser.cpp:1089: buf[bl + sl] = 0;
+      gb7_browser.cpp:1232: c.cls[0] = 0;
+      gb7_browser.cpp:1233: c.id[0] = 0;
+      gb7_browser.cpp:1250: c.cls[len] = 0;
+      gb7_browser.cpp:1255: c.id[len] = 0;
+      gb7_browser.cpp:1270: nm[ln++] = lowerCh(s[q]);
+      gb7_browser.cpp:1272: nm[ln] = 0;
+      gb7_browser.cpp:1413: chainBuf[L++] = cur;
+      gb7_browser.cpp:1421: curOk[j] = compoundMatches(dom, chainBuf[j], r.cmp[r.nComp - 1]);
+      gb7_browser.cpp:1427: nxt[j] = any;
+      gb7_browser.cpp:1431: curOk[j] = nxt[j] && compoundMatches(dom, chainBuf[j], r.cmp[ci]);
+      gb7_browser.cpp:1651: best[k] = 0u;
+      gb7_browser.cpp:1673: styles[n] = s;
+      gb7_browser.cpp:1681: styles[c] = s; // 文本节点继承父元素样式
+      gb7_browser.cpp:2195: static const char* const kWords[] = {
+  gb7_sfm.cpp            索引写入点 235 处
+      gb7_sfm.cpp:315: tab[(size_t)i] = g;
+      gb7_sfm.cpp:331: M[0] = 1.0; M[1] = 0.0; M[2] = 0.0;
+      gb7_sfm.cpp:332: M[3] = 0.0; M[4] = 1.0; M[5] = 0.0;
+      gb7_sfm.cpp:333: M[6] = 0.0; M[7] = 0.0; M[8] = 1.0;
+      gb7_sfm.cpp:341: r[i * 3 + j] = A[i * 3 + 0] * B[0 * 3 + j]
+      gb7_sfm.cpp:352: r[0] = A[0] * v[0] + A[3] * v[1] + A[6] * v[2];
+      gb7_sfm.cpp:353: r[1] = A[1] * v[0] + A[4] * v[1] + A[7] * v[2];
+      gb7_sfm.cpp:354: r[2] = A[2] * v[0] + A[5] * v[1] + A[8] * v[2];
+      gb7_sfm.cpp:355: out[0] = r[0]; out[1] = r[1]; out[2] = r[2];
+      gb7_sfm.cpp:361: r[0] = A[0] * v[0] + A[1] * v[1] + A[2] * v[2];
+      gb7_sfm.cpp:362: r[1] = A[3] * v[0] + A[4] * v[1] + A[5] * v[2];
+      gb7_sfm.cpp:363: r[2] = A[6] * v[0] + A[7] * v[1] + A[8] * v[2];
+      gb7_sfm.cpp:364: out[0] = r[0]; out[1] = r[1]; out[2] = r[2];
+      gb7_sfm.cpp:381: r[0] = (A[4] * A[8] - A[5] * A[7]) * id;
+      gb7_sfm.cpp:382: r[1] = (A[2] * A[7] - A[1] * A[8]) * id;
+      gb7_sfm.cpp:383: r[2] = (A[1] * A[5] - A[2] * A[4]) * id;
+      gb7_sfm.cpp:384: r[3] = (A[5] * A[6] - A[3] * A[8]) * id;
+      gb7_sfm.cpp:385: r[4] = (A[0] * A[8] - A[2] * A[6]) * id;
+      gb7_sfm.cpp:386: r[5] = (A[2] * A[3] - A[0] * A[5]) * id;
+      gb7_sfm.cpp:387: r[6] = (A[3] * A[7] - A[4] * A[6]) * id;
+      gb7_sfm.cpp:388: r[7] = (A[1] * A[6] - A[0] * A[7]) * id;
+      gb7_sfm.cpp:389: r[8] = (A[0] * A[4] - A[1] * A[3]) * id;
+      gb7_sfm.cpp:408: const double K[9] = {0.0, -z, y, z, 0.0, -x, -y, x, 0.0};
+      gb7_sfm.cpp:413: out[i] = id + a * K[i] + b * K2[i];
+      gb7_sfm.cpp:422: evecs[(size_t)i * n + j] = (i == j) ? 1.0 : 0.0;
+      gb7_sfm.cpp:445: A[(size_t)k * n + p] = c * akp - s * akq;
+      gb7_sfm.cpp:446: A[(size_t)k * n + q] = s * akp + c * akq;
+      gb7_sfm.cpp:450: A[(size_t)p * n + k] = c * apk - s * aqk;
+      gb7_sfm.cpp:451: A[(size_t)q * n + k] = s * apk + c * aqk;
+      gb7_sfm.cpp:455: evecs[(size_t)k * n + p] = c * vkp - s * vkq;
+      gb7_sfm.cpp:456: evecs[(size_t)k * n + q] = s * vkp + c * vkq;
+      gb7_sfm.cpp:472: MtM[i * 3 + j] = sum;
+      gb7_sfm.cpp:479: int ord[3] = {0, 1, 2};
+      gb7_sfm.cpp:487: s[i] = (lam > 0.0) ? std::sqrt(lam) : 0.0;
+      gb7_sfm.cpp:498: u0[k] = (s[0] > 1e-300) ? a0 / s[0] : 0.0;
+      gb7_sfm.cpp:499: u1[k] = (s[1] > 1e-300) ? a1 / s[1] : 0.0;
+      gb7_sfm.cpp:501: u2[0] = u0[1] * u1[2] - u0[2] * u1[1];
+      gb7_sfm.cpp:502: u2[1] = u0[2] * u1[0] - u0[0] * u1[2];
+      gb7_sfm.cpp:503: u2[2] = u0[0] * u1[1] - u0[1] * u1[0];
+      gb7_sfm.cpp:507: u0[0] = (s[0] > 1e-300) ? u0[0] : 1.0;
+      gb7_sfm.cpp:508: u1[0] = (s[1] > 1e-300) ? u1[0] : 0.0;
+      gb7_sfm.cpp:509: u1[1] = (s[1] > 1e-300) ? u1[1] : 1.0;
+      gb7_sfm.cpp:510: u2[0] = 0.0; u2[1] = 0.0; u2[2] = 1.0;
+      gb7_sfm.cpp:515: U[k * 3 + 0] = u0[k];
+      gb7_sfm.cpp:516: U[k * 3 + 1] = u1[k];
+      gb7_sfm.cpp:517: U[k * 3 + 2] = u2[k];
+      gb7_sfm.cpp:547: b[(size_t)r] -= f * b[(size_t)col];
+      gb7_sfm.cpp:555: b[(size_t)r] = sum / d;
+      gb7_sfm.cpp:577: A[(size_t)j * n + j] = d;
+      gb7_sfm.cpp:581: A[(size_t)i * n + j] = s / d;
+      gb7_sfm.cpp:587: b[(size_t)i] = s / A[(size_t)i * n + i];
+      gb7_sfm.cpp:592: b[(size_t)i] = s / A[(size_t)i * n + i];
+      gb7_sfm.cpp:627: p.p[0] = -0.60 + 0.45 * rr * std::cos(ph);
+      gb7_sfm.cpp:628: p.p[1] =  0.55 + 0.45 * u;
+      gb7_sfm.cpp:629: p.p[2] =  0.10 + 0.45 * rr * std::sin(ph);
+      gb7_sfm.cpp:632: p.texel[k] = 0.20 + 0.80 * uniSfm(s);
+      gb7_sfm.cpp:642: double q[3] = {0.0, 0.0, 0.0};
+      gb7_sfm.cpp:650: p.p[0] = 0.55 + (ca * q[0] + sa * q[2]);
+      gb7_sfm.cpp:651: p.p[1] = 0.50 + q[1];
+      gb7_sfm.cpp:652: p.p[2] = -0.10 + (-sa * q[0] + ca * q[2]);
+      gb7_sfm.cpp:655: p.texel[k] = 0.20 + 0.80 * uniSfm(s);
+      gb7_sfm.cpp:665: p.p[0] = -0.02 + rad * std::cos(th);
+      gb7_sfm.cpp:666: p.p[1] = -0.45 + rad * std::sin(th);
+      gb7_sfm.cpp:667: p.p[2] =  0.15 + 0.14 * std::sin(ph);
+      gb7_sfm.cpp:670: p.texel[k] = 0.20 + 0.80 * uniSfm(s);
+      gb7_sfm.cpp:677: p.p[0] = -1.40 + 2.80 * uniSfm(s);
+      gb7_sfm.cpp:678: p.p[1] = -1.10 + 2.20 * uniSfm(s);
+      gb7_sfm.cpp:679: p.p[2] = -1.15;
+      gb7_sfm.cpp:682: p.texel[k] = 0.25 + 0.75 * uniSfm(s);
+      gb7_sfm.cpp:693: const double target[3] = {0.0, 0.0, -0.15};
+      gb7_sfm.cpp:694: const double upW[3] = {0.0, 1.0, 0.0};
+      gb7_sfm.cpp:699: eye[0] = radius * std::sin(theta);
+      gb7_sfm.cpp:700: eye[1] = 0.12 * std::sin(theta * 2.0) + 0.05;
+      gb7_sfm.cpp:701: eye[2] = radius * std::cos(theta);
+      gb7_sfm.cpp:703: double fwd[3] = {target[0] - eye[0], target[1] - eye[1], target[2] - eye[2]};
+      gb7_sfm.cpp:708: double rt[3] = {upW[1] * fwd[2] - upW[2] * fwd[1],
+      gb7_sfm.cpp:715: double up[3] = {fwd[1] * rt[2] - fwd[2] * rt[1],
+      gb7_sfm.cpp:720: cam.R[0] = rt[0];  cam.R[1] = rt[1];  cam.R[2] = rt[2];
+      gb7_sfm.cpp:721: cam.R[3] = up[0];  cam.R[4] = up[1];  cam.R[5] = up[2];
+      gb7_sfm.cpp:722: cam.R[6] = fwd[0]; cam.R[7] = fwd[1]; cam.R[8] = fwd[2];
+      gb7_sfm.cpp:724: cam.t[0] = -(cam.R[0] * eye[0] + cam.R[1] * eye[1] + cam.R[2] * eye[2]);
+      gb7_sfm.cpp:725: cam.t[1] = -(cam.R[3] * eye[0] + cam.R[4] * eye[1] + cam.R[5] * eye[2]);
+      gb7_sfm.cpp:726: cam.t[2] = -(cam.R[6] * eye[0] + cam.R[7] * eye[1] + cam.R[8] * eye[2]);
+      gb7_sfm.cpp:727: cam.eye[0] = eye[0]; cam.eye[1] = eye[1]; cam.eye[2] = eye[2];
+      gb7_sfm.cpp:739: ker[(size_t)i] = (float)std::exp(-d2 / 2.0);   // sigma = 1 像素
+      gb7_sfm.cpp:782: bg[(size_t)y * W + x] = (float)(0.5 * (ry + cx2));
+      gb7_sfm.cpp:816: img[i] = (uint8_t)val;
+      gb7_sfm.cpp:871: out[0] = (float)sum;
+      gb7_sfm.cpp:876: out[x] = (float)sum;
+      gb7_sfm.cpp:888: a[(size_t)0 * W + x] = (float)sum;
+      gb7_sfm.cpp:893: a[(size_t)y * W + x] = (float)sum;
+      gb7_sfm.cpp:923: out[x] = (uint8_t)((s + 8) >> 4);
+      gb7_sfm.cpp:944: o1[x] = gx * gx;
+      gb7_sfm.cpp:945: o2[x] = gy * gy;
+      gb7_sfm.cpp:946: o3[x] = gx * gy;
+      gb7_sfm.cpp:970: ws.resp[i] = (float)r;
+      gb7_sfm.cpp:973: rowMax[(size_t)y] = local;
+      gb7_sfm.cpp:1071: ws.grid[(size_t)gy * gw + gx] = fs.n;
+      gb7_sfm.cpp:1108: pat[(size_t)i * 4 + k] = (int8_t)std::lround(g);
+      gb7_sfm.cpp:1151: fs.angle[(size_t)i] = (float)ang;
+      gb7_sfm.cpp:1154: uint64_t words[kDescWords] = {0ull, 0ull, 0ull, 0ull};
+      gb7_sfm.cpp:1169: fs.desc[(size_t)i * kDescWords + k] = words[k];
+      gb7_sfm.cpp:1208: fwdTmp[(size_t)a] = bi;
+      gb7_sfm.cpp:1209: fwdDist[(size_t)a] = (int)best;
+      gb7_sfm.cpp:1261: A[i * 3 + j] = sum;      // A = F^T F
+      gb7_sfm.cpp:1265: int ord[3] = {0, 1, 2};
+      gb7_sfm.cpp:1280: u0[k] = (s0 > 1e-300) ? a0 / s0 : 0.0;
+      gb7_sfm.cpp:1281: u1[k] = (s1 > 1e-300) ? a1 / s1 : 0.0;
+      gb7_sfm.cpp:1285: F[i * 3 + j] = s0 * u0[i] * evec[j * 3 + ord[0]] + s1 * u1[i] * evec[j * 3 + ord[1]];
+      gb7_sfm.cpp:1299: row[0] = nx2[i] * nx1[i];
+      gb7_sfm.cpp:1300: row[1] = nx2[i] * ny1[i];
+      gb7_sfm.cpp:1301: row[2] = nx2[i];
+      gb7_sfm.cpp:1302: row[3] = ny2[i] * nx1[i];
+      gb7_sfm.cpp:1303: row[4] = ny2[i] * ny1[i];
+      gb7_sfm.cpp:1304: row[5] = ny2[i];
+      gb7_sfm.cpp:1305: row[6] = nx1[i];
+      gb7_sfm.cpp:1306: row[7] = ny1[i];
+      gb7_sfm.cpp:1307: row[8] = 1.0;
+      gb7_sfm.cpp:1388: ws.nx1[(size_t)i] = ((double)A.x[(size_t)matches[(size_t)i].a] - mx1) * s1;
+      gb7_sfm.cpp:1389: ws.ny1[(size_t)i] = ((double)A.y[(size_t)matches[(size_t)i].a] - my1) * s1;
+      gb7_sfm.cpp:1390: ws.nx2[(size_t)i] = ((double)B.x[(size_t)matches[(size_t)i].b] - mx2) * s2;
+      gb7_sfm.cpp:1391: ws.ny2[(size_t)i] = ((double)B.y[(size_t)matches[(size_t)i].b] - my2) * s2;
+      gb7_sfm.cpp:1400: double bestF[9] = {0.0};
+      gb7_sfm.cpp:1416: ws.sample[(size_t)k] = pick;
+      gb7_sfm.cpp:1465: ws.bestMask[(size_t)i] = (d < thr) ? 1 : 0;
+      gb7_sfm.cpp:1471: const double T1[9] = {s1, 0.0, -s1 * mx1, 0.0, s1, -s1 * my1, 0.0, 0.0, 1.0};
+      gb7_sfm.cpp:1472: const double T2[9] = {s2, 0.0, -s2 * mx2, 0.0, s2, -s2 * my2, 0.0, 0.0, 1.0};
+      gb7_sfm.cpp:1480: Fpix[i * 3 + j] = s;
+      gb7_sfm.cpp:1485: Fout[i] = Fpix[i];
+      gb7_sfm.cpp:1503: P[0 * 4 + j] = kFocal * R[0 * 3 + j] + kCx * R[2 * 3 + j];
+      gb7_sfm.cpp:1504: P[1 * 4 + j] = kFocal * R[1 * 3 + j] + kCy * R[2 * 3 + j];
+      gb7_sfm.cpp:1505: P[2 * 4 + j] = R[2 * 3 + j];
+      gb7_sfm.cpp:1507: P[0 * 4 + 3] = kFocal * t[0] + kCx * t[2];
+      gb7_sfm.cpp:1508: P[1 * 4 + 3] = kFocal * t[1] + kCy * t[2];
+      gb7_sfm.cpp:1509: P[2 * 4 + 3] = t[2];
+      gb7_sfm.cpp:1522: a[j] = us[k] * P[2 * 4 + j] - P[0 * 4 + j];
+      gb7_sfm.cpp:1523: b[j] = vs[k] * P[2 * 4 + j] - P[1 * 4 + j];
+      gb7_sfm.cpp:1538: X[0] = evec[0 * 4 + mi] * iw;
+      gb7_sfm.cpp:1539: X[1] = evec[1 * 4 + mi] * iw;
+      gb7_sfm.cpp:1540: X[2] = evec[2 * 4 + mi] * iw;
+      gb7_sfm.cpp:1562: const double K[9] = {kFocal, 0.0, kCx, 0.0, kFocal, kCy, 0.0, 0.0, 1.0};
+      gb7_sfm.cpp:1563: const double Kt[9] = {kFocal, 0.0, 0.0, 0.0, kFocal, 0.0, kCx, kCy, 1.0};
+      gb7_sfm.cpp:1573: u0[k] = U[k * 3 + 0]; u1[k] = U[k * 3 + 1]; u2[k] = U[k * 3 + 2];
+      gb7_sfm.cpp:1574: v0[k] = V[k * 3 + 0]; v1[k] = V[k * 3 + 1];
+      gb7_sfm.cpp:1580: const double W[9] = {0.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0};
+      gb7_sfm.cpp:1581: const double Wt[9] = {0.0, 1.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 1.0};
+      gb7_sfm.cpp:1591: WVt[i * 3 + j] = s1v;
+      gb7_sfm.cpp:1592: WtVt[i * 3 + j] = s2v;
+      gb7_sfm.cpp:1606: const double P1[12] = {1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0};
+      gb7_sfm.cpp:1613: double tc[3] = {sign * u2[0], sign * u2[1], sign * u2[2]};
+      gb7_sfm.cpp:1618: P2[i * 4 + 3] = tc[i];
+      gb7_sfm.cpp:1623: double us[2] = {x1[i], x2[i]};
+      gb7_sfm.cpp:1624: double vs[2] = {y1[i], y2[i]};
+      gb7_sfm.cpp:1633: X2[0] += tc[0]; X2[1] += tc[1]; X2[2] += tc[2];
+      gb7_sfm.cpp:1640: rel.t[0] = tc[0]; rel.t[1] = tc[1]; rel.t[2] = tc[2];
+      gb7_sfm.cpp:1666: d[r] = cams[(size_t)ib].t[r] - (Rij[r * 3 + 0] * cams[(size_t)ia].t[0] +
+      gb7_sfm.cpp:1685: parent[(size_t)x] = r;
+      gb7_sfm.cpp:1792: okObs[(size_t)k] = 1;
+      gb7_sfm.cpp:1800: double dp[3] = {0.0, 0.0, 0.0};
+      gb7_sfm.cpp:1801: double dt[3] = {0.0, 0.0, 0.0};
+      gb7_sfm.cpp:1806: const double dpm[3] = {-dp[0], -dp[1], -dp[2]};
+      gb7_sfm.cpp:1809: const double tp[3] = {cam.t[0] + dt[0], cam.t[1] + dt[1], cam.t[2] + dt[2]};
+      gb7_sfm.cpp:1810: const double tm[3] = {cam.t[0] - dt[0], cam.t[1] - dt[1], cam.t[2] - dt[2]};
+      gb7_sfm.cpp:1813: Jc[0 * 6 + p] = (up - um) / (2.0 * kJacStep);
+      gb7_sfm.cpp:1814: Jc[1 * 6 + p] = (vp - vm) / (2.0 * kJacStep);
+      gb7_sfm.cpp:1825: Jp[0] = kFocal * iz * cam.R[0] - kFocal * xc * iz2 * cam.R[6];
+      gb7_sfm.cpp:1826: Jp[1] = kFocal * iz * cam.R[1] - kFocal * xc * iz2 * cam.R[7];
+      gb7_sfm.cpp:1827: Jp[2] = kFocal * iz * cam.R[2] - kFocal * xc * iz2 * cam.R[8];
+      gb7_sfm.cpp:1828: Jp[3] = kFocal * iz * cam.R[3] - kFocal * yc * iz2 * cam.R[6];
+      gb7_sfm.cpp:1829: Jp[4] = kFocal * iz * cam.R[4] - kFocal * yc * iz2 * cam.R[7];
+      gb7_sfm.cpp:1830: Jp[5] = kFocal * iz * cam.R[5] - kFocal * yc * iz2 * cam.R[8];
+      gb7_sfm.cpp:1835: Uc[a * 6 + b] += Jc[a] * Jc[b] + Jc[6 + a] * Jc[6 + b];
+      gb7_sfm.cpp:1841: Vp[a * 3 + b] += Jp[a] * Jp[b] + Jp[3 + a] * Jp[3 + b];
+      gb7_sfm.cpp:1847: Wk[a * 3 + b] = Jc[a] * Jp[b] + Jc[6 + a] * Jp[3 + b];
+      gb7_sfm.cpp:1860: Uc[a * 6 + a] += lambda * (Uc[a * 6 + a] + 1e-12);
+      gb7_sfm.cpp:1866: Vp[a * 3 + a] += lambda * (Vp[a * 3 + a] + 1e-12);
+      gb7_sfm.cpp:1870: vbad[(size_t)p] = 1;
+      gb7_sfm.cpp:1872: vbad[(size_t)p] = 0;
+      gb7_sfm.cpp:1884: S[(size_t)(base + a) * nCamPar + (base + b)] += Uc[a * 6 + b];
+      gb7_sfm.cpp:1886: dcam[(size_t)base + a] = gcam[(size_t)c * 6 + a];
+      gb7_sfm.cpp:1898: Y[a * 3 + b] = Wk[a * 3 + 0] * Vi[0 * 3 + b]
+      gb7_sfm.cpp:1910: S[(size_t)(base + a) * nCamPar + (base + b)] -= s2;
+      gb7_sfm.cpp:1917: dcam[(size_t)base + a] -= s2;
+      gb7_sfm.cpp:1923: S[(size_t)i * nCamPar + i] += lambda * (S[(size_t)i * nCamPar + i] + 1e-12);
+      gb7_sfm.cpp:1967: gtmp[(size_t)pt * 3 + m] -= s2;
+      gb7_sfm.cpp:1976: d[a] = Vi[a * 3 + 0] * g[0] + Vi[a * 3 + 1] * g[1] + Vi[a * 3 + 2] * g[2];
+      gb7_sfm.cpp:1993: const double dr[3] = {dcam[(size_t)(c - 1) * 6 + 0],
+      gb7_sfm.cpp:1996: const double dt[3] = {dcam[(size_t)(c - 1) * 6 + 3],
+      gb7_sfm.cpp:2002: cams[(size_t)c].t[0] += dt[0];
+      gb7_sfm.cpp:2003: cams[(size_t)c].t[1] += dt[1];
+      gb7_sfm.cpp:2004: cams[(size_t)c].t[2] += dt[2];
+      gb7_sfm.cpp:2007: pts[(size_t)p * 3 + 0] += dpt[(size_t)p * 3 + 0];
+      gb7_sfm.cpp:2008: pts[(size_t)p * 3 + 1] += dpt[(size_t)p * 3 + 1];
+      gb7_sfm.cpp:2009: pts[(size_t)p * 3 + 2] += dpt[(size_t)p * 3 + 2];
+      gb7_sfm.cpp:2057: double ms[3] = {0.0, 0.0, 0.0}, md[3] = {0.0, 0.0, 0.0};
+      gb7_sfm.cpp:2060: ms[k] += src[(size_t)i * 3 + k];
+      gb7_sfm.cpp:2061: md[k] += dst[(size_t)i * 3 + k];
+      gb7_sfm.cpp:2076: const double bb[3] = {b0, b1, b2};
+      gb7_sfm.cpp:2077: const double aa[3] = {a0, a1, a2};
+      gb7_sfm.cpp:2090: S[8] = (d >= 0.0) ? 1.0 : -1.0;
+      gb7_sfm.cpp:2103: t[0] = md[0] - s * Rs[0];
+      gb7_sfm.cpp:2104: t[1] = md[1] - s * Rs[1];
+      gb7_sfm.cpp:2105: t[2] = md[2] - s * Rs[2];
+      gb7_sfm.cpp:2223: recCams[(size_t)c].t[0] = 0.0;
+      gb7_sfm.cpp:2224: recCams[(size_t)c].t[1] = 0.0;
+      gb7_sfm.cpp:2225: recCams[(size_t)c].t[2] = 0.0;
+      gb7_sfm.cpp:2239: x1[k] = ((double)feats[(size_t)pm.ia].x[(size_t)pm.matches[k].a] - kCx) / kFocal;
+      gb7_sfm.cpp:2240: y1[k] = ((double)feats[(size_t)pm.ia].y[(size_t)pm.matches[k].a] - kCy) / kFocal;
+      gb7_sfm.cpp:2241: x2[k] = ((double)feats[(size_t)pm.ib].x[(size_t)pm.matches[k].b] - kCx) / kFocal;
+      gb7_sfm.cpp:2242: y2[k] = ((double)feats[(size_t)pm.ib].y[(size_t)pm.matches[k].b] - kCy) / kFocal;
+      gb7_sfm.cpp:2273: chainCams[(size_t)c].t[0] = chainCams[(size_t)prev].t[0];
+      gb7_sfm.cpp:2274: chainCams[(size_t)c].t[1] = chainCams[(size_t)prev].t[1];
+      gb7_sfm.cpp:2275: chainCams[(size_t)c].t[2] = chainCams[(size_t)prev].t[2];
+      gb7_sfm.cpp:2279: chainCams[(size_t)c].t[0] = rt[0] + rels[(size_t)found].t[0];
+      gb7_sfm.cpp:2280: chainCams[(size_t)c].t[1] = rt[1] + rels[(size_t)found].t[1];
+      gb7_sfm.cpp:2281: chainCams[(size_t)c].t[2] = rt[2] + rels[(size_t)found].t[2];
+      gb7_sfm.cpp:2294: double tan[3] = {0.0, 0.0, 0.0};
+      gb7_sfm.cpp:2297: tan[0] = rels[m].t[0]; tan[1] = rels[m].t[1]; tan[2] = rels[m].t[2];
+      gb7_sfm.cpp:2301: recCams[(size_t)anchor].t[0] = tan[0];
+      gb7_sfm.cpp:2302: recCams[(size_t)anchor].t[1] = tan[1];
+      gb7_sfm.cpp:2303: recCams[(size_t)anchor].t[2] = tan[2];
+      gb7_sfm.cpp:2308: camIdx[(size_t)c] = nUnk;
+      gb7_sfm.cpp:2321: const double S[9] = {0.0, -tij[2], tij[1], tij[2], 0.0, -tij[0], -tij[1], tij[0], 0.0};
+      gb7_sfm.cpp:2358: recCams[(size_t)c].t[0] = b[(size_t)camIdx[(size_t)c] * 3 + 0];
+      gb7_sfm.cpp:2359: recCams[(size_t)c].t[1] = b[(size_t)camIdx[(size_t)c] * 3 + 1];
+      gb7_sfm.cpp:2360: recCams[(size_t)c].t[2] = b[(size_t)camIdx[(size_t)c] * 3 + 2];
+      gb7_sfm.cpp:2373: recCams[(size_t)c].t[0] = chainCams[(size_t)c].t[0];
+      gb7_sfm.cpp:2374: recCams[(size_t)c].t[1] = chainCams[(size_t)c].t[1];
+      gb7_sfm.cpp:2375: recCams[(size_t)c].t[2] = chainCams[(size_t)c].t[2];
+      gb7_sfm.cpp:2402: used[(size_t)na] = 1;
+      gb7_sfm.cpp:2403: used[(size_t)nb] = 1;
+      gb7_sfm.cpp:2416: bucketOf[(size_t)r] = (int)buckets.size();
+      gb7_sfm.cpp:2536: double tc[3] = {recCams[(size_t)c].t[0], recCams[(size_t)c].t[1], recCams[(size_t)c].t[2]};
+      gb7_sfm.cpp:2550: double q[3] = {src[(size_t)c * 3 + 0], src[(size_t)c * 3 + 1], src[(size_t)c * 3 + 2]};
+      gb7_sfm.cpp:2565: double q[3] = {points[(size_t)i * 3 + 0], points[(size_t)i * 3 + 1], points[(size_t)i * 3 + 2]};
+  gb7_clang.cpp          索引写入点 137 处
+      gb7_clang.cpp:451: char g_failDetail[192] = {0};
+      gb7_clang.cpp:477: dst[0] = '\0';
+      gb7_clang.cpp:495: dst[n++] = ' ';
+      gb7_clang.cpp:523: dst[n++] = p[k];
+      gb7_clang.cpp:527: dst[n] = '\0';
+      gb7_clang.cpp:645: p[len] = '\0';
+      gb7_clang.cpp:667: static const char kUnitSource[] =
+      gb7_clang.cpp:716: static const char *aurora_titles[6] = {
+      gb7_clang.cpp:842: buffer[i] = (u8)((i * 37 + 11) & 0xFF);
+      gb7_clang.cpp:1037: out[k] = a[i];
+      gb7_clang.cpp:1040: out[k] = b[j];
+      gb7_clang.cpp:1046: out[k] = a[i];
+      gb7_clang.cpp:1051: out[k] = b[j];
+      gb7_clang.cpp:1065: data[i] = (int)((state >> 8) & 0x3FFu) - 512;
+      gb7_clang.cpp:1066: scratch[i] = data[i];
+      gb7_clang.cpp:1089: dst[i] = src[i];
+      gb7_clang.cpp:1092: dst[i] = 0;
+      gb7_clang.cpp:1130: tmp[n] = (char)('0' + (int)(v % 10ul));
+      gb7_clang.cpp:1135: tmp[n] = '-';
+      gb7_clang.cpp:1139: out[i] = tmp[n - 1 - i];
+      gb7_clang.cpp:1142: out[i] = 0;
+      gb7_clang.cpp:1192: out[i * k05_N + j] = acc;
+      gb7_clang.cpp:1214: out[j * k05_N + i] = a[i * k05_N + j];
+      gb7_clang.cpp:1236: minor[mi] = m[r * n + c];
+      gb7_clang.cpp:1258: a[i] = (i % 7) - 3;
+      gb7_clang.cpp:1259: b[i] = ((i * 5) % 11) - 5;
+      gb7_clang.cpp:1260: c[i] = 0;
+      gb7_clang.cpp:1261: t[i] = 0;
+      gb7_clang.cpp:1268: small[i] = ((i * 3) % 5) - 2;
+      gb7_clang.cpp:1302: stack[sp] = code[pc];
+      gb7_clang.cpp:1312: stack[sp - 1] = stack[sp - 1] + stack[sp];
+      gb7_clang.cpp:1318: stack[sp - 1] = stack[sp - 1] - stack[sp];
+      gb7_clang.cpp:1324: stack[sp - 1] = stack[sp - 1] * stack[sp];
+      gb7_clang.cpp:1330: stack[sp - 1] = stack[sp - 1] & stack[sp];
+      gb7_clang.cpp:1336: stack[sp - 1] = stack[sp - 1] | stack[sp];
+      gb7_clang.cpp:1342: stack[sp - 1] = stack[sp - 1] ^ stack[sp];
+      gb7_clang.cpp:1347: stack[sp - 1] = stack[sp - 1] << (acc & 7);
+      gb7_clang.cpp:1352: stack[sp - 1] = stack[sp - 1] >> (acc & 7);
+      gb7_clang.cpp:1357: stack[sp - 1] = ~stack[sp - 1];
+      gb7_clang.cpp:1362: stack[sp] = stack[sp - 1];
+      gb7_clang.cpp:1389: program[i] = k06_OP_PUSH;
+      gb7_clang.cpp:1391: program[i] = k06_OP_ADD;
+      gb7_clang.cpp:1393: program[i] = k06_OP_MUL;
+      gb7_clang.cpp:1395: program[i] = k06_OP_XOR;
+      gb7_clang.cpp:1397: program[i] = k06_OP_DUP;
+      gb7_clang.cpp:1399: program[i] = k06_OP_DROP;
+      gb7_clang.cpp:1401: program[i] = i - 3;
+      gb7_clang.cpp:1406: program[63] = k06_OP_HALT;
+      gb7_clang.cpp:1427: keys[idx] = key;
+      gb7_clang.cpp:1428: values[idx] = value;
+      gb7_clang.cpp:1432: values[idx] = values[idx] + value;
+      gb7_clang.cpp:1461: keys[i] = -1;
+      gb7_clang.cpp:1462: values[i] = 0;
+      gb7_clang.cpp:1486: ring->slots[i] = 0;
+      gb7_clang.cpp:1495: ring->slots[ring->tail] = value;
+      gb7_clang.cpp:1546: table[0] = k09_op_add;
+      gb7_clang.cpp:1547: table[1] = k09_op_sub;
+      gb7_clang.cpp:1548: table[2] = k09_op_mul;
+      gb7_clang.cpp:1549: table[3] = k09_op_div;
+      gb7_clang.cpp:1550: table[4] = k09_op_mod;
+      gb7_clang.cpp:1551: table[5] = k09_op_and;
+      gb7_clang.cpp:1552: table[6] = k09_op_or;
+      gb7_clang.cpp:1553: table[7] = k09_op_xor;
+      gb7_clang.cpp:1643: flags[i] = 1;
+      gb7_clang.cpp:1651: flags[j] = 0;
+      gb7_clang.cpp:1705: out[n] = value;
+      gb7_clang.cpp:1715: out[n] = hash;
+      gb7_clang.cpp:1780: pts[i] = aurora_point_make(i * 3 - 7, (i * i) % 11 - 5);
+      gb7_clang.cpp:1801: static const aurora_opinfo k14_ops[8] = {
+      gb7_clang.cpp:1887: entry->name[i] = name[i];
+      gb7_clang.cpp:1890: entry->name[i] = 0;
+      gb7_clang.cpp:1915: entries[i].name[0] = 0;
+      gb7_clang.cpp:1997: buffer[i] = (u8)((i * 37 + 11) & 0xFF);
+      gb7_clang.cpp:2192: out[k] = a[i];
+      gb7_clang.cpp:2195: out[k] = b[j];
+      gb7_clang.cpp:2201: out[k] = a[i];
+      gb7_clang.cpp:2206: out[k] = b[j];
+      gb7_clang.cpp:2220: data[i] = (int)((state >> 8) & 0x3FFu) - 512;
+      gb7_clang.cpp:2221: scratch[i] = data[i];
+      gb7_clang.cpp:2244: dst[i] = src[i];
+      gb7_clang.cpp:2247: dst[i] = 0;
+      gb7_clang.cpp:2285: tmp[n] = (char)('0' + (int)(v % 10ul));
+      gb7_clang.cpp:2290: tmp[n] = '-';
+      gb7_clang.cpp:2294: out[i] = tmp[n - 1 - i];
+      gb7_clang.cpp:2297: out[i] = 0;
+      gb7_clang.cpp:2347: out[i * k22_N + j] = acc;
+      gb7_clang.cpp:2369: out[j * k22_N + i] = a[i * k22_N + j];
+      gb7_clang.cpp:2391: minor[mi] = m[r * n + c];
+      gb7_clang.cpp:2413: a[i] = (i % 7) - 3;
+      gb7_clang.cpp:2414: b[i] = ((i * 5) % 11) - 5;
+      gb7_clang.cpp:2415: c[i] = 0;
+      gb7_clang.cpp:2416: t[i] = 0;
+      gb7_clang.cpp:2423: small[i] = ((i * 3) % 5) - 2;
+      gb7_clang.cpp:2457: stack[sp] = code[pc];
+      gb7_clang.cpp:2467: stack[sp - 1] = stack[sp - 1] + stack[sp];
+      gb7_clang.cpp:2473: stack[sp - 1] = stack[sp - 1] - stack[sp];
+      gb7_clang.cpp:2479: stack[sp - 1] = stack[sp - 1] * stack[sp];
+      gb7_clang.cpp:2485: stack[sp - 1] = stack[sp - 1] & stack[sp];
+      gb7_clang.cpp:2491: stack[sp - 1] = stack[sp - 1] | stack[sp];
+      gb7_clang.cpp:2497: stack[sp - 1] = stack[sp - 1] ^ stack[sp];
+      gb7_clang.cpp:2502: stack[sp - 1] = stack[sp - 1] << (acc & 7);
+      gb7_clang.cpp:2507: stack[sp - 1] = stack[sp - 1] >> (acc & 7);
+      gb7_clang.cpp:2512: stack[sp - 1] = ~stack[sp - 1];
+      gb7_clang.cpp:2517: stack[sp] = stack[sp - 1];
+      gb7_clang.cpp:2544: program[i] = k23_OP_PUSH;
+      gb7_clang.cpp:2546: program[i] = k23_OP_ADD;
+      gb7_clang.cpp:2548: program[i] = k23_OP_MUL;
+      gb7_clang.cpp:2550: program[i] = k23_OP_XOR;
+      gb7_clang.cpp:2552: program[i] = k23_OP_DUP;
+      gb7_clang.cpp:2554: program[i] = k23_OP_DROP;
+      gb7_clang.cpp:2556: program[i] = i - 3;
+      gb7_clang.cpp:2561: program[63] = k23_OP_HALT;
+      gb7_clang.cpp:2582: keys[idx] = key;
+      gb7_clang.cpp:2583: values[idx] = value;
+      gb7_clang.cpp:2587: values[idx] = values[idx] + value;
+      gb7_clang.cpp:2616: keys[i] = -1;
+      gb7_clang.cpp:2617: values[i] = 0;
+      gb7_clang.cpp:2641: ring->slots[i] = 0;
+      gb7_clang.cpp:2650: ring->slots[ring->tail] = value;
+      gb7_clang.cpp:2701: table[0] = k26_op_add;
+      gb7_clang.cpp:2702: table[1] = k26_op_sub;
+      gb7_clang.cpp:2703: table[2] = k26_op_mul;
+      gb7_clang.cpp:2704: table[3] = k26_op_div;
+      gb7_clang.cpp:2705: table[4] = k26_op_mod;
+      gb7_clang.cpp:2706: table[5] = k26_op_and;
+      gb7_clang.cpp:2707: table[6] = k26_op_or;
+      gb7_clang.cpp:2708: table[7] = k26_op_xor;
+      gb7_clang.cpp:2798: flags[i] = 1;
+      gb7_clang.cpp:2806: flags[j] = 0;
+      gb7_clang.cpp:2860: out[n] = value;
+      gb7_clang.cpp:2870: out[n] = hash;
+      gb7_clang.cpp:2935: pts[i] = aurora_point_make(i * 3 - 7, (i * i) % 11 - 5);
+      gb7_clang.cpp:2956: static const aurora_opinfo k31_ops[8] = {
+      gb7_clang.cpp:3042: entry->name[i] = name[i];
+      gb7_clang.cpp:3045: entry->name[i] = 0;
+      gb7_clang.cpp:3070: entries[i].name[0] = 0;
+      gb7_clang.cpp:3355: static const char kUnitName[] = "gb7_clang_unit.c";
+
+====================================================================================================
+结论: 全部 PASS —— 没有任何 '容量 < 索引上界' 的数组(没有按旧尺寸写死的缓冲)。
+====================================================================================================

@@ -1,0 +1,126 @@
+====================================================================================================
+[A] 源码结构断言
+====================================================================================================
+  [PASS] A1 存在逐核启动状态探测 probeCoreStartupState()
+  [PASS] A2 逐核读 cpuN/online 并把原文存下来(out->onlineRawPer)
+  [PASS] A3 三个全局文件 present / possible / online 的原文都读下来
+  [PASS] A4 三个全局文件各自的 errno 原样保留
+  [PASS] A5 逐核 online 的 errno 也逐核保留(文件不存在=不支持热插拔, 与'没权限'分开)
+  [PASS] A6 逐核 cpufreq/cpuinfo_max_freq 原文 + errno
+  [PASS] A7 逐核 cpufreq/scaling_cur_freq 原文 + errno
+  [PASS] A8 逐核 topology/core_id 原文 + errno
+  [PASS] A9 逐核 topology/physical_package_id 原文 + errno
+  [PASS] A10 逐核 topology/thread_siblings_list 原文 + errno
+  [PASS] A11 逐核发 sched_setaffinity({c})
+  [PASS] A12 设置后立刻读回(sched_getaffinity)
+  [PASS] A13 判定用'读回掩码 == 那一位'而不是只看返回值
+  [PASS] A14 返回 0 但读回不是那一位 -> 记为夹回, 不算接受
+  [PASS] A15 逐核记 errno(含'读回失败'与'夹回'两种非 errno 形态)
+  [PASS] A16 四类常量都在(A/B/C/D 各有定义)
+  [PASS] A17 判据顺序固定: D(present) -> C(online) -> A(实测接受) -> B(实测被拒)
+  [PASS] A18 D 类判据 = present 原文不含该核号(hasPresent == 0)
+  [PASS] A19 C 类判据 = online 原文为 0(核处于 offline, 热插拔下线)
+  [PASS] A20 B 类判据 = present 含该核但实测 setaffinity 被拒
+  [PASS] A21 A 类判据 = 实测 setaffinity 被内核接受
+  [PASS] A22 判据在注释里逐条写明(A/B/C/D 的判据不许只存在于代码里)
+  [PASS] A23 明确写出不绕过内核策略(B 类只上报)
+  [PASS] A24 对 online 文件存在的核才尝试写(不支持热插拔的不写)
+  [PASS] A25 写之前先备份原值
+  [PASS] A26 打开 cpuN/online 的 errno 原样记下(EACCES/EPERM/EROFS 是不同性质的证据)
+  [PASS] A27 写之后读回, 用读回值判'到底拉起来没有'(返回 0 不算)
+  [PASS] A28 无论成败都无条件恢复(只有当前值 != 备份值时才回写)
+  [PASS] A29 恢复后读回校验(restoreOk 由读回与备份比较得出, 不是假设成功)
+  [PASS] A30 写失败时把 errno 记全(fwrite / fflush / fclose 三处)
+  [PASS] A31 打不开时明确写下'未写'(不许把'没写'当成'写失败'或'写成功')
+  [PASS] A32 结论文本区分三种情形: 无 C 类 / 拉起成功 / 应用域无权拉起
+  [PASS] A33 无权限时把 errno 映射成人话(EACCES / EPERM / EROFS / ENOENT / EBUSY)
+  [PASS] A34 探测前保存原掩码, 结束后无条件还原
+  [PASS] A35 探测发生在计时区间之外(会话开始之前, 不在任何负载文件里)
+  [PASS] A36 核号上界取五个来源的最大值(不会因某处读数失败而漏核)
+  [PASS] A37 逐核启动状态被拼进每项 note 的那一行(cpuAllowedText)
+  [PASS] A38 分类结果逐项上报到 placement(A/B/C/D 四个计数与四个位图都在)
+  [PASS] A39 六项取证同时给出: 可用核数 / 工作集合 / 线程数 / 成功绑到独占核 / M 与清单 / 每核是否有线程
+  [PASS] A40 M<N 的原因链里必须有'逐核启动状态'那一条(带数字)
+  [PASS] A41 原因链不许静默: 未定位时也要给出去处
+  [PASS] A42 线程数 = 可用逻辑核数这条口径已生效(2026-10-06 按真机 A/B 回退)
+  [PASS] A43 逐核占用用 /proc/stat 差值(口径未变)
+  [PASS] A44 新增阈值判据: 阈值是一个具名常量(5%), 不是散落的魔数
+  [PASS] A45 低于阈值的核逐核列出(带每个核自己的忙占比)
+  [PASS] A46 结论措辞写明'该核在整个本项期间基本没干活'
+  [PASS] A47 与'完全没干活(Δ忙=0)'分开列(两条判据不许混)
+  [PASS] A48 一个都不低于阈值时也要给正面结论(不许只有坏消息才有输出)
+  [PASS] A49 两次 /proc/stat 读盘仍在计时区间之外
+  [PASS] A49b napi 侧把分类结果交出去(coreClassA/B/C/D + 四个位图 + 拉起探测的六个计数器)
+  [PASS] A50 计分公式一个字未动
+  [PASS] A51 ENTRIES 的 k/conv 未被触碰(抽查 3 项)
+  [PASS] A52 16 项负载的打点数量未变(16/16)
+  [PASS] A53 executor 的任务分解一个字没动(chunk=64 / join 顺序 / threads<=1 串行)
+  [PASS] A54 新增代码里没有按机型/SoC 的分支(无型号字符串)
+  [PASS] A55 新增探测只读 sysfs —— 全文件只有两处写打开, 都是 online 写探测(写 + 恢复)
+
+====================================================================================================
+[B] 数字镜像: 逐核分类判据(真机形状 + 穷举)
+====================================================================================================
+  真机现状(三源矛盾): present=0-8 / 实测 accept=0-7
+    present=0-8 possible=0-8 online=0-8 -> 上界 9; 逐核分类 0:A 1:A 2:A 3:A 4:A 5:A 6:A 7:A 8:B
+    A=8 B=1 C=0 D=0
+  若 14 个核都在 present 且在线、实测全接受
+    present=0-13 possible=0-13 online=0-13 -> 上界 14; 逐核分类 0:A 1:A 2:A 3:A 4:A 5:A 6:A 7:A 8:A 9:A 10:A 11:A 12:A 13:A
+    A=14 B=0 C=0 D=0
+  若 present=0-8 里有 2 个核 offline(热插拔下线)
+    present=0-8 possible=0-8 online=0-6 -> 上界 9; 逐核分类 0:A 1:A 2:A 3:A 4:A 5:A 6:A 7:B 8:B
+    A=7 B=2 C=0 D=0
+  若 present=0-8 全部在线但只有 0-5 被允许
+    present=0-8 possible=0-8 online=0-8 -> 上界 9; 逐核分类 0:A 1:A 2:A 3:A 4:A 5:A 6:B 7:B 8:B
+    A=6 B=3 C=0 D=0
+  [PASS] B1 真机现状: cpu0-7 全部归 A(在线且实测被接受)
+  [PASS] B2 真机现状: cpu8 归 B(在 present 里、online 原文为 1、但实测被拒 —— 不是没启动)
+  [PASS] B3 真机现状: C 类 = 0 个(没有任何核处于 offline)
+  [PASS] B4 真机现状: D 类 = 0 个(9 个核号都在 present 里)
+  [PASS] B5 online 原文为 0 的核必须归 C(即便实测掩码被接受也不行 —— '没启动'高一级)
+  [PASS] B6 C 类核不会再被算成 A/B(每个核只归一类)
+  [PASS] B7 present 不含的核号必须归 D(硬件/固件根本没报)
+  [PASS] B8 穷举 10 核 x {online=0,1} x {接受,被拒} = 40 种组合, 分类恒等于判据表
+  [PASS] B9 present 不含时, 无论 online/实测如何都归 D(判据 D 优先于其它三条)
+  [PASS] B10 present 原文解析: '0-3,8-11' -> {0,1,2,3,8,9,10,11}
+  [PASS] B11 语法异常(区间反了)跳过那一段而不是猜
+  [PASS] B12 空串 -> 空集合(不把'读不到'当成'有 cpu0')
+
+====================================================================================================
+[C] 恢复逻辑镜像: C 类拉起(备份 -> 写 -> 读回 -> 恢复)
+====================================================================================================
+  C 类核, 应用无权限(打开 online 就 EACCES=13)                   -> wrote=0 writeErrno=13 after=0 restoreWrote=0 final=0 restoreOk=1 open-failed
+  C 类核, 应用无权限(EPERM=1)                                 -> wrote=0 writeErrno=1 after=0 restoreWrote=0 final=0 restoreOk=1 open-failed
+  C 类核, 只读文件系统(EROFS=30)                               -> wrote=0 writeErrno=30 after=0 restoreWrote=0 final=0 restoreOk=1 open-failed
+  C 类核, 打开成功但写返回 0 个字节(errno=13)                       -> wrote=1 writeErrno=13 after=0 restoreWrote=0 final=0 restoreOk=1 still-offline
+  C 类核, 写返回 1 个字节但读回仍是 0(内核忽略了写)                       -> wrote=1 writeErrno=0 after=0 restoreWrote=0 final=0 restoreOk=1 still-offline
+  C 类核, 写成功且读回变成 1(真的拉起来了) -> 必须恢复成 0                  -> wrote=1 writeErrno=0 after=1 restoreWrote=1 final=0 restoreOk=1 lifted
+  在线核(A 类)也做同一次写探测: 写后读回仍是 1, 值没变 -> 不回写               -> wrote=1 writeErrno=0 after=1 restoreWrote=0 final=1 restoreOk=1 lifted
+  没有 cpuN/online 文件(不支持热插拔) -> 不写、不报成功                 -> wrote=0 writeErrno=0 after=0 restoreWrote=0 final=0 restoreOk=1 no-online-file
+  [PASS] C1 打开 online 失败(EACCES) -> 一个字节都不许写, 原值必须不变
+  [PASS] C2 关闭权限(errno 原样带回, 不许写成含糊的'拉不起来')
+  [PASS] C3 写返回 0 个字节时(cWriteFail 路径)不算拉起来
+  [PASS] C4 写成功 + 读回变成 1 才算拉起来
+  [PASS] C5 拉起成功之后必须恢复成原值 0(final == backup)
+  [PASS] C6 值没被改动过时不做多余的回写(在线核那一行 restoreWrote == 0)
+  [PASS] C7 没有 online 文件时不写、也不把自己算成'拉起来了'
+  [PASS] C8 所有路径下最终值都等于备份值(restoreOk 恒为 1)
+
+====================================================================================================
+[D] 结论链镜像: 有核没启动 / 有线程没跑, 各是哪一条原因
+====================================================================================================
+  真机现状(A=8, B=1, C=0, D=0; 可用核数 8; 线程 8; 池线程 8; 用到 8) -> 无 —— 已铺满
+  若 2 个核 offline(A=6, C=2; 可用 6; 线程 6; 池线程 6; 用到 6)          -> 无 —— 已铺满
+  若线程数被夹(A=8, B=1; 可用 8; 线程 4; 池线程 4; 用到 4)                -> B(在线但被许可集合拒绝) 1 个; 线程数被夹到 4(可用 8)
+  [PASS] D1 已铺满(M == N)时不报假原因
+  [PASS] D2 有 C 类核时, 原因链第一条就是'没启动'(最上游的原因)
+  [PASS] D3 M<N 时, C/B/D 三类都进原因链(带数字)
+  [PASS] D4 线程数被夹时必须写明被夹到几个
+
+====================================================================================================
+结论: 全部 PASS —— 逐核启动状态已有行为学判据(全局 present/possible/online 原文 +
+      逐核 cpuN/online 原文 + 逐核 setaffinity 实测与 errno + 逐核频率/拓扑原文),
+      每个核归入且仅归入 A/B/C/D 一类; C 类拉起探测先备份、无论成败都恢复且读回校验,
+      失败原样记 errno 并明确写出'应用域无权拉起下线核'; 多核阶段六项取证同源同报,
+      整项忙占比 < 5% 的核单独列出并写明'该核在整个本项期间基本没干活'。
+====================================================================================================

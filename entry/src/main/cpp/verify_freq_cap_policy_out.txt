@@ -1,0 +1,149 @@
+====================================================================================================
+[A] 源码锚: 枚举 / 只读 / 逐路径 errno / 计时区间之外
+====================================================================================================
+  [PASS] A1 cpu_freq_sample.h / .cpp 都在
+  [PASS] A2 有 capDirListOnce()
+  [PASS] A2 有 capLoadPolicy()
+  [PASS] A2 有 capLoadTimeInState()
+  [PASS] A2 有 capResolvePolicyOfCore()
+  [PASS] A2 有 capAppendPolicySummary()
+  [PASS] A2 有 capAppendTisSummary()
+  [PASS] A2 有 capAppendAlternatives()
+  [PASS] A2 有 readFreqCapEvidence()
+  [PASS] A3 真的是列目录(opendir + readdir), 不是拼路径猜编号
+  [PASS] A4 目录读不到时记 errno(而不是当成'没有 policy')
+  [PASS] A5 目录为空也要能区分(条目总数 + 第一个非 policy 条目都记下来)
+  [PASS] A6 核->policy 用 readlink(内核自己给的映射), 再退到 related_cpus/affected_cpus 位图
+  [PASS] A7 readlink 的失败与'认不出'分开记(errno vs -2)
+  [PASS] A8 逐 policy 读 9 条只读节点(related/affected/driver/governor + 5 个频率节点)
+  [PASS] A9 time_in_state 两条路径都试(policyN/ 与 policyN/stats/), 逐路径记 errno
+  [PASS] A10 替代读数三条都在(/proc/cpufreq + cpufreq/boost + cooling_device*/cur_state)
+  [PASS] A11 每一段都逐路径记 errno, 读不到就写读不到(不用 0 冒充)
+  [PASS] A12 容量放不下时显式写'被截断'(不静默丢尾部判决)
+  [PASS] A13 全文件只有只读调用(没有 O_WRONLY/O_RDWR/O_CREAT/::write/fopen"w")
+  [PASS] A14 取证里没有任何'写 scaling_max_freq / 锁频 / 改 governor'的动作
+  [PASS] A15 取证在采样线程 join 之后 / buildText 之前(即计时区间之外)
+  [PASS] A16 采样线程里仍然没有 opendir/readdir(枚举只在会话收尾做一次)
+  [PASS] A17 目录列举结果进程内只取一次(静态标志), 逐档读数每会话重读
+
+====================================================================================================
+[B] 数据表: 从源码里抽出来, 再给下面的模型用(两份不一致就失败)
+====================================================================================================
+  [PASS] B1 policy 根目录就是内核那一条
+  [PASS] B2 热区根目录就是 /sys/class/thermal
+  [PASS] B3 逐 policy 的路径模板齐备(4 个 cpu 列表/策略节点 + 2 条 time_in_state)
+  [PASS] B4 readlink 的路径模板就是 cpuN/cpufreq
+  [PASS] B5 errno 短名表覆盖真机出现的那几个(1/2/5/13/21/22)
+  [PASS] B6 非 errno 的两个口径码也写清楚了(-1 空 / -2 非法)
+  [PASS] B7 逐核四条 cpuN 路径仍在(旧行为没被删掉)
+
+====================================================================================================
+[C] 纯逻辑复刻 + 合成数据断言
+====================================================================================================
+  [PASS] C1 区间反了判非法
+  [PASS] C2 核号 >= 64 判非法(不截断)
+  [PASS] C3 尾随逗号 / 连续逗号 / 非数字开头都判非法
+  [PASS] C4 readlink 目标取最后一个 policy 片段
+  [PASS] C5 time_in_state 第三个字段判非法
+  [PASS] C6 先 related 再 affected, 失败的一律跳过
+
+  --- ① 目录读不到(opendir EACCES) ---
+  [PASS] 1.1 opendir EACCES -> 一个 policy 都拿不到, 且 errno 记成 13
+  [PASS] 1.2 readlink 也 EACCES 时 -> '定不了所属 policy'(不退回拿核号当 policy 号)
+  [PASS] 1.3 判决必须是'仍不能定案'(而不是猜成'没压上限'): policy 都没定出来时不许给结论
+
+  --- ② policy 目录为空(只有 boost 之类) ---
+  [PASS] 2.1 目录能读, 但 policyN 目录 0 个 -> 明确区分于'读不到'
+  [PASS] 2.2 没有 policy 目录 + readlink ENOENT -> 仍然是'定不了'
+
+  --- ③ related_cpus 格式异常 ---
+  [PASS] 3.1 非法 cpulist '' -> 口径码 -1, 且不产生任何核匹配
+  [PASS] 3.1 非法 cpulist '   ' -> 口径码 -1, 且不产生任何核匹配
+  [PASS] 3.1 非法 cpulist ',0-3' -> 口径码 -1, 且不产生任何核匹配
+  [PASS] 3.1 非法 cpulist '0-' -> 口径码 -1, 且不产生任何核匹配
+  [PASS] 3.1 非法 cpulist '0-3,' -> 口径码 -1, 且不产生任何核匹配
+  [PASS] 3.1 非法 cpulist '0-3,,5' -> 口径码 -1, 且不产生任何核匹配
+  [PASS] 3.1 非法 cpulist '0-3;5' -> 口径码 -1, 且不产生任何核匹配
+  [PASS] 3.1 非法 cpulist '0-70' -> 口径码 -2, 且不产生任何核匹配
+  [PASS] 3.1 非法 cpulist '3-0' -> 口径码 -1, 且不产生任何核匹配
+  [PASS] 3.1 非法 cpulist '4-11x' -> 口径码 -1, 且不产生任何核匹配
+  [PASS] 3.1 非法 cpulist '64' -> 口径码 -2, 且不产生任何核匹配
+  [PASS] 3.1 非法 cpulist 'abc' -> 口径码 -1, 且不产生任何核匹配
+  [PASS] 3.1 非法 cpulist 'cpu0-3' -> 口径码 -1, 且不产生任何核匹配
+  [PASS] 3.2 合法 cpulist ' 4-7 ' -> [4, 5, 6, 7]
+  [PASS] 3.2 合法 cpulist '0' -> [0]
+  [PASS] 3.2 合法 cpulist '0-3' -> [0, 1, 2, 3]
+  [PASS] 3.2 合法 cpulist '0-3,8-11' -> [0, 1, 2, 3, 8, 9, 10, 11]
+  [PASS] 3.2 合法 cpulist '4-11' -> [4, 5, 6, 7, 8, 9, 10, 11]
+  [PASS] 3.2 合法 cpulist '4-7\n' -> [4, 5, 6, 7]
+  [PASS] 3.3 前面那条 policy 的 related_cpus 非法时, 不会挡住后面那条的正确命中
+  [PASS] 3.4 全部非法 -> 未命中(-1), 不猜
+
+  --- ④ time_in_state(顶档全 0 / 用过 / 非法行) ---
+  [PASS] 4.1 16 档全部解析出来, 0 条非法行
+  [PASS] 4.2 最高两档 = 2270000 与 2100000
+  [PASS] 4.3 顶两档全 0 -> 结论句 = '从未被请求过'
+  [PASS] 4.4 顶档用过(99) -> 结论句 = '顶档用过'
+  [PASS] 4.5 time_in_state 里没有 2270 档 -> 最高档就是 2100, 不凭空造出一个 2270
+  [PASS] 4.6 多一个字段的行判非法并计数(tisBadLines), 空行不算非法
+  [PASS] 4.7 两条路径都读不到 -> 逐路径 errno 都留着(13 / 2), 步数为 0
+  [PASS] 4.8 旧路径没有、新路径有 -> 走 stats/ 并且来源标成 2
+
+====================================================================================================
+[D] 真机布局回放: policy 编号 != 首个核号, policy4 根本不存在
+====================================================================================================
+  [PASS] D1 枚举出的是 policy0/policy1/policy2 三个(没有 policy4), 排序稳定
+  [PASS] D2 cpu4 解析到 **policy1**(readlink), 不是 policy4
+  [PASS] D3 旧写法(核号当 policy 号)会去读 policy4 -> 该目录不存在(ENOENT): 复现真机那条读数
+  [PASS] D4 cpu4 的 readlink 目标能被解析成 1(相对路径也认)
+  [PASS] D5 交叉核对: related_cpus 位图也指向同一个 policy1
+  [PASS] D6 policy1 的 cpuinfo_max_freq=2270000 读到了, 但 scaling_max_freq=EACCES(13)
+  [PASS] D7 policy1 的历史: 1995 有累计时间(7777), 2100/2270 都是 0 -> '从未被请求过'
+  [PASS] D8 判决: 上限读数读不到 -> 仍不能定案(不是'没压'), 并把两档全 0 的历史证据摆出来
+  [PASS] D9 反例对照: 若 scaling_max_freq 可读且 =1995000 -> 判决必须是'上限是系统压的'
+  [PASS] D10 反例对照: 两者相等 -> 判决必须是'没压上限'(不许把'没压'说成'压了')
+  [PASS] D11 99.5% 与 87.9% 都算出来: 1995000/2270000 -> 87%
+
+====================================================================================================
+[E] errno 口径与文本完整性
+====================================================================================================
+  [PASS] E1 逐路径都写 errno 的数字与名字(EACCES(13) 这种形状)
+  [PASS] E2 判决三档的措辞都在源码里(压了 / 没压 / 读不到)
+  [PASS] E3 '编号规则'那句必须写进报告(N 不是第一个核号)
+  [PASS] E4 旧的判决规则原句一字未改(verify_warmup_saturation.py 也在盯它)
+  [PASS] E5 capText 容量已按新内容扩到 >= 2048(直接写数字或用 kCapTextCap 常量都认)
+  [PASS] E6 取证文本的容量常量与 FreqSession 用的同一个
+
+====================================================================================================
+[F] 原生执行: 把 C++ 里那四条纯逻辑逐字抽出来编译成真程序, 跑同一批合成输入
+====================================================================================================
+  [PASS] F1 [Python 复刻] readlink 目标 '../../cpufreq/policy1' -> 1
+  [PASS] F1 [Python 复刻] readlink 目标 'policy0' -> 0
+  [PASS] F1 [Python 复刻] readlink 目标 'policy12' -> 12
+  [PASS] F1 [Python 复刻] readlink 目标 '/sys/devices/system/cpu/cpufreq/policy7' -> 7
+  [PASS] F1 [Python 复刻] readlink 目标 '../policyX' -> -1
+  [PASS] F1 [Python 复刻] readlink 目标 '../policy' -> -1
+  [PASS] F1 [Python 复刻] readlink 目标 '/sys/devices/system/cpu' -> -1
+  [PASS] F1 [Python 复刻] readlink 目标 'policy1/foo' -> 1
+  [PASS] F2 [Python 复刻] time_in_state 行 '1995000 0' -> (1995000, 0)
+  [PASS] F2 [Python 复刻] time_in_state 行 '558000 12345\n' -> (558000, 12345)
+  [PASS] F2 [Python 复刻] time_in_state 行 '1995000\t777\n' -> (1995000, 777)
+  [PASS] F2 [Python 复刻] time_in_state 行 '2270000 0000\r\n' -> (2270000, 0)
+  [PASS] F2 [Python 复刻] time_in_state 行 '1995000 12 34' -> None
+  [PASS] F2 [Python 复刻] time_in_state 行 '1995000' -> None
+  [PASS] F2 [Python 复刻] time_in_state 行 '' -> None
+  [PASS] F2 [Python 复刻] time_in_state 行 'abc' -> None
+  [PASS] F2 [Python 复刻] time_in_state 行 '   ' -> None
+  [PASS] F2 [Python 复刻] time_in_state 行 '0 0' -> (0, 0)
+  [PASS] F7 [Python 复刻] findPolicy: related 非法的记录被跳过, cpu4 -> 下标 1 (via=related)
+  [PASS] F8 [Python 复刻] findPolicy: cpu12 只能靠 affected_cpus 命中 -> 下标 2 (via=affected)
+  [PASS] F9 [Python 复刻] findPolicy: cpu1 两条位图都没命中 -> -1
+  [PASS] F3 抽出来的片段齐全(结构体 + 四条纯逻辑函数)
+  [PASS] F4 抽出来的源码能编译成 x86-64 目标(说明抽的是完整可编译的片段)
+  [PASS] F5 能链成不需要 CRT 的独立可执行文件
+  [PASS] F6 原生执行 40 条合成输入: 四条纯逻辑的真实行为逐条符合预期(退出码 0)
+        (测试程序 = C:\Users\elysi\AppData\Local\Temp\aurora_freq_cap_native\harness.exe, 编译/链接日志 = C:\Users\elysi\AppData\Local\Temp\aurora_freq_cap_native\build.log)
+
+====================================================================================================
+全部通过(1) 
+====================================================================================================

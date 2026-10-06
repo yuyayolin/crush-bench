@@ -1,0 +1,6 @@
+{
+  "name": "libaurorasn.so",
+  "types": "./index.d.ts",
+  "version": "0.1.0",
+  "description": "AuroraBench 3DMark Steel Nomad style GPU section (Aurora Nomad Light)"
+}

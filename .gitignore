@@ -1,0 +1,39 @@
+# ---- 构建产物 ----
+entry/build/
+entry/.cxx/
+.hvigor/
+.hvigor_*/
+build/
+oh_modules/
+node_modules/
+
+# ---- 本机配置(每台机器的 SDK 路径都不一样, 不能进仓库) ----
+local.properties
+.idea/
+*.iml
+.clangd/
+.clang-format
+
+# ---- 工作目录: 绝对不要提交 ----
+# _work/ 里是真机运行日志(含设备型号)、逐项调试记录、内部笔记。
+_work/
+work/
+*.log
+
+# ---- 二进制产物 ----
+# .hap 走 GitHub Releases 附件, 不进 git 历史(一个包 24MB, 会让仓库迅速膨胀)。
+release/*.hap
+*.hap
+
+# ---- 系统垃圾 ----
+.DS_Store
+Thumbs.db
+desktop.ini
+# ---- ref/ 里抓下来的第三方原始语料 ----
+# 那 506 个文件 / 35MB 是 k 与锚点表的"证据本体"(别人的网页 / PDF / 导出表),
+# 本地留档即可, 不需要转发别人的整份文档; 而且会把仓库淹掉。
+# 只留两个真用例和一份来源说明 —— 见 ref/PROVENANCE.md。
+ref/*
+!ref/layout_cases.test.mjs
+!ref/numberfmt_cases.test.mjs
+!ref/PROVENANCE.md

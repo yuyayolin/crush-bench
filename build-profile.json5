@@ -1,0 +1,47 @@
+{
+  "app": {
+    "signingConfigs": [],
+    "products": [
+      {
+        "name": "default",
+        // HarmonyOS SDK(DevEco 26.0.0.105)打包 —— 2026-10-06 定案。
+        //  compatibleSdkVersion 必须写成 "6.0.0(20)" 这种带括号的形式, 它决定 minAPIVersion(60000020);
+        //  2026-10-06 从 5.1.0(18) 抬到 6.0.0(20): 为了用上真正的沉浸光感(hdsEffect / pointLight,
+        //  这套 API 在 API 20 才进入 SDK 的可用面)。代价 = 装不上的门槛从 API 18 抬到 API 20。
+        //  手边四台都在 24 以上(Pura X Max 26 / Mate 60 Pro 26 / MatePad Pro 24 / Mate 70 Pro+ 更高),
+        //  所以对现有设备零影响; 卡的是 API 18/19 的老机器。
+        //  compileSdkVersion 必须是**三段点分**字符串("26.0.0"), 写成 "26" 会报
+        //  00306042 ... must be a string(错误信息指向的位置是假的)。
+        "compatibleSdkVersion": "6.0.0(20)",
+        "compileSdkVersion": "26.0.0",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          },
+          // 原生库保留符号表: HarmonyOS SDK 默认在打包时 strip, .so 会从 15.5MB 掉到 4.6MB,
+          // 崩溃报告里的 pc/lr 就再也还原不出函数名了(设备上那份 native 崩溃取证会白写)。
+          "nativeLib": {
+            "debugSymbol": {
+              "strip": false
+            }
+          }
+        }
+      }
+    ],
+    "buildModeSet": [
+      { "name": "debug" },
+      { "name": "release" }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        { "name": "default", "applyToProducts": ["default"] }
+      ]
+    }
+  ]
+}

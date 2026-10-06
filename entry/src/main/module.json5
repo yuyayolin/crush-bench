@@ -1,0 +1,77 @@
+{
+  "module": {
+    "name": "entry",
+    "type": "entry",
+    "description": "$string:module_desc",
+    "mainElement": "EntryAbility",
+    // 必须声明 tablet: 只写 "default"(=手机) 时, 系统会在平板上以 **手机兼容模式**
+    // 运行本应用 —— 表现就是横屏时只占中间一条竖条、两侧全空, 而且拿不到完整的窗口尺寸
+    // (布局断点算得再对也没用)。见 5.2 用户 MatePad Pro 实测反馈。
+    //
+    // "2in1"(电脑): 2026-10-05 实测定案 —— **不需要换 SDK**。
+    //   device-define/*.json 只是一份 SysCaps 能力清单, 不是编译器目标; 本机 SDK 缺的只是
+    //   2in1.json 这一份文件(11800 B, 取自 OpenHarmony interface_sdk-js 仓库)。把它补进
+    //   sdk/default/openharmony/{ets,js}/api/device-define/ 之后, 这里写 "2in1" 就能正常
+    //   构建(hvigor BUILD SUCCESSFUL, 打包出的 module.json 里带 2in1)。
+    //   注: 能不能装进电脑还取决于签名证书链, 那要在真机上装一次才知道。
+    "deviceTypes": ["default", "tablet", "2in1"],
+    "deliveryWithInstall": true,
+    "installationFree": false,
+    "pages": "$profile:main_pages",
+    // 唯一需要联网权限的地方: 「关于」页可选的「日志自动上传」。
+    // 默认关闭且地址为空时, 应用不产生任何网络请求, 也不接任何第三方分析 SDK。
+    "requestPermissions": [
+      {
+        "name": "ohos.permission.INTERNET"
+      }
+    ],
+    "abilities": [
+      {
+        "name": "EntryAbility",
+        "srcEntry": "./ets/entryability/EntryAbility.ets",
+        "description": "$string:EntryAbility_desc",
+        "icon": "$media:app_icon",
+        "label": "$string:EntryAbility_label",
+        "startWindowIcon": "$media:startIcon",
+        "startWindowBackground": "$color:start_window_background",
+        // 旋转策略(2026-10-05 修正) 三种窗口模式都要保留: 跑分工具在大屏上应当铺满整屏。
+        //
+        // 为什么**不是** "auto_rotation"(7.2 用的是它, 这是个 bug):
+        //   本机 SDK(API 18) D:\ohos-tools\sdk\18\ets\api\@ohos.window.d.ts 里
+        //   window.Orientation 的枚举注释写得很明确(逐字抄录):
+        //       AUTO_ROTATION = 5               // "Follow the rotation of the sensor, ignore auto rotation lock."
+        //       AUTO_ROTATION_RESTRICTED = 8    // "Follow the rotation of the sensor, controlled by auto rotation lock."
+        //       AUTO_ROTATION_UNSPECIFIED = 12  // "Follow the rotation of the sensor, determined by the system, controlled by auto rotation lock."
+        //   module.json5 的合法取值由 SDK 的 schema 给出, 出处:
+        //   D:\ohos-tools\sdk\18\toolchains\modulecheck\module.json 的 abilities[].orientation.enum ——
+        //   unspecified / landscape / portrait / follow_recent / landscape_inverted / portrait_inverted /
+        //   auto_rotation / auto_rotation_landscape / auto_rotation_portrait / auto_rotation_restricted /
+        //   auto_rotation_landscape_restricted / auto_rotation_portrait_restricted / locked /
+        //   auto_rotation_unspecified / follow_desktop   (共 15 个)
+        //   其中 bundle 侧的名字与语义见 D:\ohos-tools\sdk\18\ets\api\@ohos.bundle.bundleManager.d.ts
+        //   的 DisplayOrientation: AUTO_ROTATION_RESTRICTED = "Indicates the sensor restricted mode"。
+        //
+        //   → "auto_rotation" 会**无视系统旋转锁定**(用户开着锁定, App 里照样跟着传感器转 —— 这就是
+        //     用户报的那件事); "auto_rotation_restricted" 是**跟随传感器(横竖都能转)但受系统旋转锁定约束**,
+        //     正好是我们要的: 锁定开着就不转, 锁定关着在平板上横屏照常铺满整屏。
+        //   → 没有选 "auto_rotation_unspecified": 它虽然同样受锁定约束, 但"往哪个方向转"由系统决定
+        //     (手机上通常被定成只竖屏), 我们就拿不到"平板上横屏铺满"这个能力了。
+        //   → 也没有选 "*_landscape_restricted": 那会把应用锁死在横向。
+        //
+        // 与"平板横屏只占中间一条"的关系: 那件事的根因是 deviceTypes 只写了 default(手机兼容模式),
+        // 已由上面的 ["default", "tablet"] 修好; 与本次取值是**两件独立的事**。本次只把
+        // "无视系统锁定" 改成 "尊重系统锁定", 应用的**可旋转方向没有变**(仍然是横竖都可),
+        // 因此横屏铺满整屏的能力原样保留。
+        "orientation": "auto_rotation_restricted",
+        "supportWindowMode": ["fullscreen", "split", "floating"],
+        "exported": true,
+        "skills": [
+          {
+            "entities": ["entity.system.home"],
+            "actions": ["action.system.home"]
+          }
+        ]
+      }
+    ]
+  }
+}

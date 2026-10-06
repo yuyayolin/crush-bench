@@ -1,0 +1,131 @@
+  [PASS] [H] 参考分对照模块存在(只读; 不跑负载) -- reference_compare.cpp/.h
+====================================================================================================
+Aurora Nomad Light (GPU-SNL) 统一尺子自查 -- D:\新建文件夹\aurora-bench\entry\src\main\cpp\sn\sn_renderer.cpp
+====================================================================================================
+
+[A] 负载与设备完全无关(不许有任何设备相关分支)
+  [PASS] A1 负载代码里没有设备名 / SoC 名 / 机型串 -- 0 处命中(参照值表 kRefPoints 已单独排除)
+  [PASS] A2 没有按分辨率 / 屏幕 / 设备类型做分支 -- 没有 displayInfo/deviceType/screenSize 之类的分支
+  [PASS] A3 公开参照值只用于输出文本(不参与任何判断/计算分支) -- kRefPoints 的字段只被 buildJson 的循环读出来写成文本: ['device', 'note', 'officialScore', 'soc', 'verification']
+  [PASS] A4 kWidth 是 const 编译期常量 -- const int kWidth
+  [PASS] A4 kHeight 是 const 编译期常量 -- const int kHeight
+  [PASS] A4 kTilePx 是 const 编译期常量 -- const int kTilePx
+  [PASS] A4 kTilesX 是 const 编译期常量 -- const int kTilesX
+  [PASS] A4 kOpsPerPixelPassA 是 const 编译期常量 -- const int kOpsPerPixelPassA
+  [PASS] A4 kOpsPerPixelPassB 是 const 编译期常量 -- const int kOpsPerPixelPassB
+  [PASS] A4 kFragsPerTile 是 const 编译期常量 -- const int kFragsPerTile
+  [PASS] A4 kPassLadderMin 是 const 编译期常量 -- const int kPassLadderMin
+  [PASS] A4 kPassLadderMax 是 const 编译期常量 -- const int kPassLadderMax
+  [PASS] A5 顶点着色器不读任何顶点属性缓冲(几何在 GPU 侧生成) -- VS 里没有任何 in 变量声明
+  [PASS] A6 顶点位置只由 gl_VertexID / gl_InstanceID 决定 -- 两个 VS 都用 gl_VertexID + gl_InstanceID
+  [PASS] A7 C++ 侧不递交任何顶点数据 -- 没有 glBufferData / glVertexAttribPointer / glEnableVertexAttribArray
+  [PASS] A8 本小节不引用 gb7_* / gpu7_* 的任何代码 -- 去掉只是报告字段名的 gb7Item/gpu7Item 之后, 没有任何 gb7_*/gpu7_* 符号
+  [PASS] A9 没有读设备文件做任何负载决策 -- 负载路径里没有 /sys 或 /proc 读取
+
+[B] 吞吐量口径与分数口径(与 3DMark 公开值同形)
+  [PASS] B1 计分公式就是 score = fps x kScorePerFps -- snComputeStats(): s.score = s.fps * kScorePerFps; buildJson 只引用它(单点定义)
+  [PASS] B2 k3dmarkNomadScale = 135(UL 官方明文) -- 135.0
+  [PASS] B3 kScorePerFps = 135 x kWorkloadScale x 像素比(不是随便写的数) -- kScorePerFps = k3dmarkNomadScale * kWorkloadScale * kResolutionScaleRatio
+  [PASS] B4 像素比来自 1920x1080 与 SNL 官方 2560x1440 -- 0.5625 = (1920*1080)/(2560*1440)
+  [PASS] B5 吞吐量 = 每帧像素 x 帧率 -- snComputeStats(): s.pxPerSecond = s.pxPerFrame * s.fps
+  [PASS] B6 报告里同时给出 fps 与 Mpx/s -- fps.value + throughput.value(unit=Mpx/s)
+  [PASS] B7 分数与吞吐量严格成正比(两者只差一个常数) -- JSON 里带 proportional:true 与 formula
+
+[C] 规模自适应: 只改趟数, 不改每单位工作量
+  [PASS] C1 唯一的自由度是 passesPerFrame -- choosePasses() 只返回趟数
+  [PASS] C2 每像素 ALU 数是常量(不出现在任何按测量结果赋值的路径上) -- 两个 ops 常量各只赋值一次
+  [PASS] C3 分辨率是常量, 自适应不改它 -- glViewport 永远用 kWidth x kHeight
+  [PASS] C4 tile 像素数是常量(不随设备变) -- kTilesX x kTilesYCeil 个 32x32 的 tile
+  [PASS] C5 阶梯是 2 的幂 -- choosePasses 里按 2 的幂取档
+  [PASS] C6 自适应过程本身不进最终统计(试探帧单独一段) -- probe 与 final 是两次独立调用
+  [PASS] C7 结果里写明本项用了多少趟 + 自适应的依据 -- scale.passesPerFrame / probePerPassMs / scaleRatio / basisText
+  [PASS] C8 一趟的定义与趟数无关(趟循环里不改任何负载参数) -- 只有趟序号 p 传进去(它只用来选种子/双缓冲目标)
+
+[D] 离线复算每像素工作量(把两份 GLSL 展开成直线代码再数 ALU)
+  [PASS] D0 两份片元着色器都解析到了 -- gbuffer=3814 字节, shade=3092 字节
+     离线数出: passA=176 op/px, passB=286 op/px, 合计 462
+     源码写死: passA=176 op/px, passB=286 op/px, 合计 462
+  [PASS] D1 pass A 的每像素 ALU 数与源码常量一致(±25%) -- 176 vs 176
+  [PASS] D2 pass B 的每像素 ALU 数与源码常量一致(±25%) -- 286 vs 286
+  [PASS] D3 每像素工作量与 passesPerFrame 无关(着色器里没有 passesPerFrame) -- 两份 GLSL 里都没有这个 uniform
+  [PASS] D4 着色器里没有 discard(否则每单位工作量会因像素而变) -- 没有 discard
+  [PASS] D5 着色器里的循环都是固定次数(循环上界是字面量) -- 循环上界: ['3', '8']
+  [PASS] D6 片元着色器里没有 texture() 以外的数据依赖采样(没有纹理上传/回读) -- 只建固定尺寸的 G-buffer/颜色目标, 回读只在自证时读 32x32
+
+[E] 报告字段 / 不许静默失败 / 尺子余量
+  [PASS] E1 结果 JSON 契约里的字段名齐全 -- 26 个字段名全部出现
+  [PASS] E2 带 benchmark 级版本号, 且与 App 版本号分开说明 -- benchVersion + 说明字段
+  [PASS] E3 明确写出跨版本不可比 -- benchVersionText 与 format.perVersionComparable=false
+  [PASS] E4 有「递增 benchVersion」的规则说明 -- 文件头与常量注释里都写了
+  [PASS] E5 自证: 每帧 GPU 侧工作量 -- work.pixelsPerFrame / work.opsPerFrame / work.fragmentInvocationsPerFrame
+  [PASS] E6 自证: 不是被 CPU 递交卡住的(有 draw call 数与递交/GPU 比值) -- gpuBoundEvidence 里的八项都在
+  [PASS] E7 自证: 两种趟数的耗时比值(GPU/CPU 判别) -- cpuGpuScaling 段
+  [PASS] E8 尺子余量: 记录核数 / SMT / 向量能力 -- ruler.cpu + ruler.simd
+  [PASS] E9 尺子余量: 写明本小节只用到几个线程 + 未来余量说明 -- ruler.cpu.maxConcurrencyUsed / ruler.headroomNotes
+  [PASS] E10 顶到阶梯上限时明确报警(不静默) -- limitReached 分支
+  [PASS] E11 失败不返回 0/静默: 失败结果带 error 与 lastError -- failJson() 同时写 error 与 lastError
+  [PASS] E12 napi 层导出(模块名 aurorasn / 函数齐全) -- 9 个导出
+  [PASS] E13 CMake 里是独立的 napi 模块, 且不依赖 libaurorabench -- libaurorasn.so 只链 napi + EGL/GLES3
+  [PASS] E14 不并入 GB7: 源码里没有任何写 GB7 分数的地方 -- 本文件只输出自己的 JSON
+
+[F] 离线镜像: 生成一份与实现字段逐字一致的结果 JSON 样例
+  [PASS] F1 关键常量都能从源码里取到 -- ['kApiCallsPerPass', 'kBytesPerPixelPerPass', 'kDefaultMeasureFrames', 'kDrawCallsPerPass', 'kHeight', 'kOpsPerPixelPassA', 'kOpsPerPixelPassB', 'kPassLadderMax', 'kPassLadderMin', 'kReadbackPx', 'kTilePx', 'kWidth']
+  [PASS] F2 一趟的像素数 >= 1920x1080 且只多出重叠的一行 -- 2088960 px(满屏 2073600, 多出 15360 = 重叠部分)
+  [PASS] F3 kScorePerFps = 135 x kWorkloadScale x 0.5625 (= 75.9375) -- 75.937500
+  [PASS] F3b 分辨率归一化的闭环: 两者相等条件成立 -> 修正系数为 1 -- score_aurora = 135 x fps_snl/res_ratio x workload_scale = score_snl (workload_scale=1)
+  [PASS] F4 实现里的字段名与样例一致(实现侧缺项) -- 全部 28 个字段在实现里都能找到
+     样例 JSON 已写入: D:\新建文件夹\aurora-bench\entry\src\main\cpp\sn_json_sample.json
+
+[G] 跨代可比性的自洽检查(用公开的 SNL 代际比)
+  [PASS] G1 公开值之间的比值自洽(991/303 = 3.27, 991/454 = 2.18, 454/303 = 1.50) -- 3.271 / 2.183 / 1.498
+  [PASS] G2 本小节的分数对同一设备是严格线性的(比值不受 kScorePerFps 影响) -- score ∝ fps = 吞吐量, 所以代际比 = 吞吐量比
+  [PASS] G3 公开值折算到本小节像素数后在尺子上回到公开分(换算闭环) -- 991 分 -> 官方 7.341 fps(1440p) -> 本小节等效 13.05 fps(1080p) -> 991.000 分
+
+[H] 验收标准「要有跑分的意义, 像其他主流跑分软件一样」逐条落实
+  [PASS] H1a 多轮重复: 默认 >= 3 轮, 且可以配置 -- kDefaultRepeats=3, repeats/gapMs 可由 optionsJson 传入
+  [PASS] H1b 每一轮都完整跑(预热 + 计时 + 环境采样), 逐轮原始值全部列出 -- repeatability.roundsDetail 列出每一轮的原始值
+  [PASS] H1c 给出中位 / 最小 / 最大 / 相对离散度 -- statistics.{fps,throughputMpxPerSec,score,perPassMs} 都带 median/min/max/dispersion
+  [PASS] H1d 代表值取中位, 不是最好一次 -- JSON 写明 representative=median; 源码里没有「取最好一轮」的路径
+  [PASS] H1e 醒目的「本次结果是否可信」判断(>5% 标注仅供参考) -- credibility.verdict(RELIABLE/FAIR/UNRELIABLE) + warnings 里带「仅供参考」
+  [PASS] H1f 有效性检查里也带「可重复」这一项 -- validity.checks.repeatable
+  [PASS] H1g 少于 3 轮时明确说「离散度本身也不可信」 -- warnings 里有一条针对轮数不足的提示
+  [PASS] H2a 报告温度(最小/中位/最大), 来源写明 -- /sys/class/thermal/thermal_zoneN/temp 逐 zone 采样
+  [PASS] H2b 报告运行时频率(最小/中位/最大), 逐核原文 -- /sys/.../cpufreq/scaling_cur_freq 逐核采样 + perCore 原文
+  [PASS] H2c 明确标注本次是否降频 / 未跑满频率档 -- environment.stability.state + 判据(前后半段频率比 / 温度)
+  [PASS] H2d 首轮 vs 后续轮记录(不掩盖热身效应) -- firstRoundFps / laterRoundsMedianFps / firstVsLaterPercent / warmupEffect
+  [PASS] H2e 诚实写明 GPU 频率/温度读不到, 只给间接证据 -- environment.gpuClockReadable=false + 说明
+  [PASS] H3a 有参考分对照表(与公开真值并列) -- referenceComparison 块
+  [PASS] H3b 每条对照都带来源与来源种类 -- source + sourceKind(官方/用户提供/第三方分开)
+  [PASS] H3c 来源强度逐条标注, 第三方数据不写成官方 -- 991=USER_PROVIDED_PRIMARY_OBSERVATION(用户拍屏一手证据) / 303=UNVERIFIED / 454=VERIFIED_UL_DB
+  [PASS] H3d 查不到的项写查不到 -- notAvailable[] + comparable=false + why
+  [PASS] H3e 用户给的 GB7 真值(8 项 + 复合分)都在真值表里 -- 8 个吞吐 + 8 个分数 + 单核 1633 / 多核 6802
+  [PASS] H3f 参考分对照是独立只读模块(libauroraref.so), 不并进跑分主模块 -- libauroraref.so 只链 napi + hilog
+  [PASS] H4a 本小节有一句话真实用途 -- realUse / realUseShort
+  [PASS] H4b GB7 16 项 + GPU 11 项也都有真实用途(对照模块里的表) -- reference_compare.cpp 的 kRealUseTable 覆盖 16+11+1 项
+  [PASS] H5a 分数是怎么来的(公式 + k 的来源) -- score.formula + kScorePerFpsFormula + k3dmarkNomadScale
+  [PASS] H5b 单位是什么 -- score.unit=points / throughput.unit=Mpx/s / fps
+  [PASS] H5c 为什么与官方同口径或不同口径 -- basis + 对照表里的同口径/不同口径说明
+  [PASS] H5d 计分公式与口径写进了逐项解释 -- referenceComparison 的 howComputed.formula = k x (metric x conv)
+  [PASS] H6a 报告允许核集合与 governor 原文 -- environment.probe.allowedCores/List + governor + errno
+  [PASS] H6b 明确写「不检测跑分模式 / 不做特供优化」并给出可质疑的原始读数 -- environment.antiBenchmarkMode
+  [PASS] H6c 读不到的读数写 errno, 不填 0 冒充 -- 逐项 errno 字段
+  [PASS] H6d 温度/频率读数不可用时明确说不假装稳定 -- environment.state=UNKNOWN + warnings
+  [PASS] H6e 阈值是我们自己定的, 报告里注明 -- repeatability.thresholdsAreOurs
+
+[I] 最高优先级验收标准: 分数比 == 性能比(线性尺度)
+  [PASS] I1 单项分公式只有一个变量(score = k x metric x conv) -- score = fps x 编译期常量; 没有分段/指数/按设备取值
+  [PASS] I2 报告里有线性自检块(构造性 + 两个可自检条件) -- linearity.{byConstruction,selfChecks,verdict}
+  [PASS] I3 线性自检会给出 verdict 与不通过时的处置口径 -- LINEAR / NONLINEAR_SUSPECT + ifNotLinear
+  [PASS] I4 跨档位每趟耗时被用来验证线性(固定开销不随规模变) -- perPassSpreadPct = 不同 pass 档位每趟耗时的离散度
+  [PASS] I5 需要两台设备才能做的那部分标注 -- needsTwoDevices[] 指向 verify_linearity_regression.py
+  [PASS] I6 分数旁标注本次条件(可用核集合 / 频率中位 / 线程数 / M/N) -- comparability.conditions.*
+  [PASS] I7 给出条件化可比性判断(与谁可比 / 与谁不可比) -- comparability.verdict.{class,comparableWith,notComparableWith,conditionText}
+  [PASS] I8 给出可执行的归一化方案(同频 + 每核) -- normalization.normalizedThroughput = 吞吐 / 频率中位 x 标称最高频
+  [PASS] I9 写明'吞吐 ∝ 频率'的前提与读不到时的降级 -- normalization.precondition + 拿不到就给 null
+  [PASS] I10 参考模块里也带线性自检与条件化可比性(GB7 多核侧) -- reference_compare.cpp: linearityAudit + comparabilityAudit
+  [PASS] I11 参考模块里写明复合分是几何平均 + 官方同口径 -- composite.formula + 线性说明
+  [PASS] I12 未计分项明确不进复合分(宁可未计分也不混进去) -- linearityAudit 逐项 status = LINEAR_BY_CONSTRUCTION / NOT_SCORED
+
+====================================================================================================
+共 103 项断言, 失败 0 项 -> PASS
+====================================================================================================

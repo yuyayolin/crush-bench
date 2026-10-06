@@ -1,0 +1,468 @@
+{
+  "ok": true,
+  "section": "GPU-SNL",
+  "kind": "gpu-nomad-light",
+  "workload": "Aurora Nomad Light",
+  "scored": false,
+  "gb7Item": false,
+  "scoreContributes": false,
+  "benchVersion": 1,
+  "benchVersionText": "benchVersion=1 ... 跨版本不可比 ...",
+  "format": {
+    "revision": "snl-1",
+    "fingerprint": "fnv1a64:XXXXXXXXXXXXXXXX",
+    "perVersionComparable": false
+  },
+  "score": {
+    "value": 0.0,
+    "unit": "points",
+    "formula": "score = fps x kScorePerFps",
+    "kScorePerFps": 75.9375,
+    "k3dmarkNomadScale": 135.0,
+    "kResolutionScaleRatio": 0.5625,
+    "basis": "UL 官方 44002528075: SNL 总分 = 平均帧率 x 135; 135 x 0.5625 = 75.9375",
+    "proportional": true
+  },
+  "fps": {
+    "value": 0.0,
+    "meanFrameMs": 0.0,
+    "medianFrameMs": 0.0,
+    "bestFrameMs": 0.0,
+    "worstFrameMs": 0.0,
+    "stability": 0.0,
+    "measuredFrames": 8,
+    "warmupFrames": 2
+  },
+  "throughput": {
+    "value": 0.0,
+    "unit": "Mpx/s",
+    "formula": "pixelsPerFrame x fps",
+    "pixelsPerFrame": 0.0,
+    "pixelsPerSecond": 0.0
+  },
+  "work": {
+    "pixelsPerPass": 2088960,
+    "passesPerFrame": 0,
+    "pixelsPerFrame": 0.0,
+    "fullScreenPixels": 2073600,
+    "fragmentInvocationsPerFrame": 0.0,
+    "opsPerPixelPerPass": 462,
+    "opsPerPixelPassA": 176,
+    "opsPerPixelPassB": 286,
+    "opsPerFrame": 0.0,
+    "opsPerSecond": 0.0,
+    "unit": "gpu-work",
+    "perUnitWorkIsConstant": true
+  },
+  "scale": {
+    "passesPerFrame": 0,
+    "source": "ADAPTIVE_PROBE(...)",
+    "adaptive": true,
+    "onlyFreedomIsPassCount": true,
+    "neverChangesPerUnitWork": true,
+    "ladder": "2 的幂, 1..4096",
+    "targetFrameMs": 12.0,
+    "maxPasses": 64,
+    "probeUsed": true,
+    "probePasses": 4,
+    "probePerPassMs": 0.0,
+    "probeAtMs": 0.0,
+    "probeScalePerSecond": 0.0,
+    "scaleRatio": 0.0,
+    "limitReached": false
+  },
+  "gpuBoundEvidence": {
+    "conclusive": true,
+    "verdict": "GPU_BOUND",
+    "tilesPerPass": 2040,
+    "tilePx": 32,
+    "fragmentsPerTile": 1024,
+    "gridPerPass": "60x34",
+    "drawCallsPerPass": 2,
+    "drawCallsPerFrame": 0,
+    "drawCallsIndependentOfWorkload": true,
+    "verticesPerFrame": 0.0,
+    "cpuVertexDataBytesPerFrame": 0,
+    "gpuSideGeneratedGeometry": true,
+    "syncPointsPerFrame": 1,
+    "cpuSubmitMsPerFrame": 0.0,
+    "gpuBusyMsPerFrame": 0.0,
+    "submissionDuty": 0.0,
+    "gpuBusyPercentOfFrame": 0.0,
+    "cpuGpuRatio": 0.0,
+    "ratioMin": 0.0,
+    "ratioMax": 0.0,
+    "fenceAvailable": true
+  },
+  "cpuGpuScaling": {
+    "available": true,
+    "lowPasses": 4,
+    "lowMs": 0.0,
+    "highPasses": 4,
+    "highMs": 0.0,
+    "scalingRatio": 0.0,
+    "expectedIfGpuBound": 0.0,
+    "expectedIfCpuBound": 1.0,
+    "validityRange": "0..0",
+    "verdict": "SEPARATED"
+  },
+  "selfProof": {
+    "completed": true,
+    "readbackAvailable": true,
+    "readbackPx": 32,
+    "readbackSum": 0,
+    "readbackNonZero": 0,
+    "readbackMin": 0,
+    "readbackMax": 0,
+    "readbackExpectedNonZero": 4096,
+    "perUnitWorkConstant": true,
+    "gpuThroughputTargeted": true
+  },
+  "crossGeneration": {
+    "primaryComparableQuantity": "throughput(Mpx/s)",
+    "scoreRatioIsStableAcrossDevices": true,
+    "publishedSnlRatios": [
+      {
+        "pair": "9030 Pro / 9000S",
+        "ratio": 3.27
+      },
+      {
+        "pair": "9030 Pro / 9020",
+        "ratio": 2.18
+      },
+      {
+        "pair": "9020 / 9000S",
+        "ratio": 1.5
+      }
+    ]
+  },
+  "reference": {
+    "source": "3DMark Steel Nomad Light 公开成绩",
+    "verified": false,
+    "resolutionFixedByUL": true,
+    "latestVerifiedAnchor": "Kirin 9020 = 454",
+    "cpuLimitationInvalidatesGraphicsScore": true,
+    "scaling": {
+      "officialScoreEquals135TimesFps": true,
+      "k3dmarkNomadScale": 135.0,
+      "kResolutionScaleRatio": 0.5625
+    },
+    "points": [
+      {
+        "soc": "Kirin 9030 Pro",
+        "device": "HUAWEI Mate 80 Pro Max",
+        "officialScore": 991.0,
+        "verification": "USER_PROVIDED_PRIMARY_OBSERVATION",
+        "note": "机型 Mate 80 Pro Max / 测试项 Steel Nomad Light / 总分 991 / 平均帧率 7.34 FPS / 来源=用户拍屏(一手证据, 2026-08-31 截图); caveat(保留): UL 官方成绩库查不到该机型条目, 且与 956/998/993 等其他 9030 Pro 读数不完全一致",
+        "officialFpsAt2560x1440": 13.050205761316873,
+        "equivFpsAt1920x1080": 13.050205761316873,
+        "equivScoreOnThisRuler": 991.0
+      },
+      {
+        "soc": "Kirin 9020",
+        "device": "HUAWEI Mate 70 / Pura 80 / Mate X6",
+        "officialScore": 454.0,
+        "verification": "VERIFIED_UL_DB",
+        "note": "UL 官方成绩库机型行(用户提交结果中位数) + nanoreview 一致",
+        "officialFpsAt2560x1440": 5.978600823045268,
+        "equivFpsAt1920x1080": 5.978600823045268,
+        "equivScoreOnThisRuler": 454.0
+      },
+      {
+        "soc": "Kirin 9000S",
+        "device": "HUAWEI Mate 60 / MatePad Pro 13.2",
+        "officialScore": 303.0,
+        "verification": "UNVERIFIED",
+        "note": "只有 nanoreview 一处; UL 成绩库没有 Mate 60 系列条目",
+        "officialFpsAt2560x1440": 3.9901234567901236,
+        "equivFpsAt1920x1080": 3.9901234567901236,
+        "equivScoreOnThisRuler": 303.0
+      }
+    ]
+  },
+  "calibration": {
+    "status": "UNCALIBRATED",
+    "kScorePerFpsInUse": 75.9375,
+    "kWorkloadScaleInUse": 1.0,
+    "derivation": "两者相等 => kScorePerFps = 135 x 0.5625 = 75.9375",
+    "affectsAbsoluteScoreOnly": true,
+    "ratioIsValidWithoutCalibration": true
+  },
+  "ruler": {
+    "cpu": {
+      "logicalCores": 0,
+      "physicalCores": 0,
+      "smtPossible": false,
+      "smtEnabled": false,
+      "threadCap": 0,
+      "maxConcurrencyUsed": 1
+    },
+    "simd": {
+      "arch": 0,
+      "neon": false,
+      "sve": false,
+      "sve2": false,
+      "i8mm": false
+    }
+  },
+  "rendering": {
+    "width": 1920,
+    "height": 1080,
+    "fixedResolution": true,
+    "passes": 2,
+    "instancing": "glDrawArraysInstanced(GL_TRIANGLES, 0, 6, 2040)",
+    "vertexBuffers": 0,
+    "fixedSeed": true
+  },
+  "gpu": {
+    "glVersion": "",
+    "glVendor": "",
+    "glRenderer": "",
+    "vsync": false,
+    "offScreen": true
+  },
+  "linearity": {
+    "requirement": "分数比 == 性能比(线性尺度)",
+    "direction": "score = (工作量 / 时间) x 常数",
+    "byConstruction": {
+      "workLinearInTime": true
+    },
+    "selfChecks": {
+      "perPassStable": {
+        "pass": true,
+        "spreadPercent": 0.0
+      },
+      "roundStable": {
+        "pass": true,
+        "spreadPercent": 0.0,
+        "rounds": 3
+      }
+    },
+    "canSelfCheckOnThisDevice": true,
+    "verdict": "LINEAR"
+  },
+  "comparability": {
+    "question": "这个分数是在什么条件下取得的?",
+    "conditions": {
+      "allowedCoresOk": true,
+      "allowedCores": 9,
+      "allowedList": "0,1,2,3,4,5,6,7,8",
+      "logicalCores": 14,
+      "physicalCores": 9,
+      "smtPossible": true,
+      "threadsUsedByThisSection": 1,
+      "coresUsedByThisSection": 1,
+      "coresUsedMOverN": "1/9",
+      "runtimeKhzMedian": 2270000,
+      "runtimeKhzMax": 2270000,
+      "nominalTopKhz": 2270000,
+      "envState": "STABLE"
+    },
+    "normalization": {
+      "normalizedThroughputMpxPerSec": null,
+      "normalizedScore": null,
+      "formula": "normalized = throughput / runtimeKhzMedian x nominalTopKhz"
+    },
+    "verdict": {
+      "class": "CLEAN_TOP_FREQ",
+      "comparableWith": [],
+      "notComparableWith": [],
+      "conditionText": "..."
+    },
+    "whatWouldMakeItComparable": []
+  },
+  "realUse": "非光追的 game-like 场景: 对程序化地形做光线求交 -> G-buffer -> 延迟 PBR 着色",
+  "realUseShort": "非光追 game-like 场景的地形求交 + 延迟 PBR 着色(现代手游主渲染通路)",
+  "environment": {
+    "gpuClockReadable": false,
+    "temperature": {
+      "available": true,
+      "unit": "degC",
+      "zoneIndex": 0,
+      "zoneName": "soc_thermal",
+      "zonesScanned": 12,
+      "samples": 40,
+      "min": 41.0,
+      "median": 44.5,
+      "max": 47.0,
+      "errno": 0
+    },
+    "cpuKhz": {
+      "available": true,
+      "unit": "kHz",
+      "coresScanned": 14,
+      "samples": 40,
+      "min": 1200000,
+      "median": 2270000,
+      "max": 2270000,
+      "firstHalfMedian": 2270000,
+      "secondHalfMedian": 2270000,
+      "errno": 0
+    },
+    "sampling": {
+      "intervalMs": 50,
+      "repeats": 3,
+      "gapMs": 1500
+    },
+    "stability": {
+      "state": "STABLE",
+      "cpuKhzDropPercent": 0.0,
+      "throttled": false
+    },
+    "probe": {
+      "allowedCoresOk": true,
+      "allowedCores": 9,
+      "allowedList": "0,1,2,3,4,5,6,7,8",
+      "governor": "schedutil",
+      "governorErrno": 0,
+      "perCore": []
+    },
+    "antiBenchmarkMode": "不检测任何'跑分模式', 也不做任何特供优化"
+  },
+  "referenceComparison": {
+    "thisDeviceIsNotCalibrated": true,
+    "referenceDevice": "HUAWEI Mate 80 Pro Max (Kirin 9030 Pro)",
+    "referenceDeviceSource": "用户提供的公开真值",
+    "comparisonIsNotAnOfficialConversion": true,
+    "gpuSnl": {
+      "ours": {
+        "score": 0.0,
+        "fps": 0.0,
+        "throughputMpxPerSec": 0.0
+      },
+      "officialFormula": "score = 平均帧率 x 135",
+      "sourceKind": "OFFICIAL_3DMARK_SUPPORT",
+      "rows": [
+        {
+          "name": "Kirin 9020",
+          "referenceScore": 454.0,
+          "ourScore": 0.0,
+          "deltaPercent": 0.0,
+          "sourceKind": "VERIFIED_UL_DB",
+          "source": "..."
+        }
+      ]
+    },
+    "gb7SingleCore": {
+      "role": "见 aurora-reference 模块"
+    },
+    "gb7SingleCoreTruths": {
+      "referenceDevice": "HUAWEI Mate 80 Pro Max (Kirin 9030 Pro)",
+      "composite": {
+        "single": 1633.0,
+        "multi": 6802.0
+      },
+      "rows": [
+        {
+          "name": "Clang",
+          "referenceMetric": "2.78 Klines/s",
+          "referenceScore": 1697.0,
+          "ourScore": null,
+          "deltaPercent": null,
+          "comparable": false
+        }
+      ]
+    },
+    "notAvailable": [
+      "查不到: ..."
+    ]
+  },
+  "repeatability": {
+    "repeats": 3,
+    "roundsOk": 3,
+    "roundValuesAreAllListed": true,
+    "representative": "median(中位) —— 不是最好一次, 也不是平均",
+    "dispersionDefinition": "相对离散度 = (最大 - 最小) / 中位 x 100%",
+    "thresholdsAreOurs": true,
+    "thresholds": {
+      "reliable": "<= 2%",
+      "fair": "<= 5%",
+      "unreliable": "> 5%"
+    },
+    "statistics": {
+      "fps": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "dispersion": 0.0,
+        "cv": 0.0
+      },
+      "throughputMpxPerSec": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "score": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "perPassMs": {
+        "median": 0.0
+      }
+    },
+    "credibility": {
+      "verdict": "RELIABLE",
+      "dispersion": 0.0,
+      "reliable": true,
+      "roundCountSufficient": true
+    },
+    "roundsDetail": [
+      {
+        "round": 1,
+        "ok": true,
+        "passesPerFrame": 16,
+        "fps": 0.0,
+        "perPassMs": 0.0,
+        "throughputMpxPerSec": 0.0,
+        "score": 0.0,
+        "tempC": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "cpuKhz": {
+          "min": 0,
+          "median": 0,
+          "max": 0
+        },
+        "envState": "STABLE"
+      }
+    ],
+    "stability": {
+      "perPassMsFirst": 0.0,
+      "perPassMsLast": 0.0,
+      "perPassDriftPercent": 0.0,
+      "dropped": false,
+      "firstRoundFps": 0.0,
+      "laterRoundsMedianFps": 0.0,
+      "firstVsLaterPercent": 0.0,
+      "warmupEffect": false
+    }
+  },
+  "config": {
+    "passesPerFrameOption": 0,
+    "measureFrames": 8,
+    "repeats": 3,
+    "gapMs": 1500,
+    "targetMs": 12.0,
+    "maxPasses": 64,
+    "defaults": {
+      "passesPerFrame": 0,
+      "measureFrames": 8,
+      "repeats": 3,
+      "gapMs": 1500,
+      "targetMs": 12.0,
+      "maxPasses": 64
+    }
+  },
+  "validity": {
+    "valid": true,
+    "pass": true,
+    "checks": {}
+  },
+  "warnings": [],
+  "elapsedMs": 0.0,
+  "notes": "",
+  "risks": ""
+}

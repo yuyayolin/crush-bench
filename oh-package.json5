@@ -1,0 +1,11 @@
+{
+  "modelVersion": "5.0.0",
+  "name": "aurora-bench",
+  "version": "1.0.0",
+  "description": "Crush分 - HarmonyOS benchmark",
+  "main": "",
+  "author": "",
+  "license": "",
+  "dependencies": {},
+  "devDependencies": {}
+}

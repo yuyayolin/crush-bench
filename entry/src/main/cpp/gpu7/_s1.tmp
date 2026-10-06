@@ -1,0 +1,360 @@
+// ---------------------------------------------------------------------------
+// 着色器源码 1/3: Background Blur / Face Tracking / Feature Matching / Fluid
+// 全部为 GLSL ES 3.00 (#version 300 es)。
+// ---------------------------------------------------------------------------
+
+const char* FS_BLUR_H = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uTex;
+uniform vec2 uTexel;
+uniform float uRadius;
+uniform float uSigma;
+void main() {
+    vec4 sum = vec4(0.0);
+    float wsum = 0.0;
+    for (int i = -15; i <= 15; i++) {
+        float fi = float(i);
+        float w = exp(-(fi * fi) / (2.0 * uSigma * uSigma));
+        sum += texture(uTex, vUV + vec2(fi * uRadius * uTexel.x, 0.0)) * w;
+        wsum += w;
+    }
+    fragColor = sum / max(wsum, 0.0001);
+}
+)GLSL";
+
+const char* FS_BLUR_V = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uTex;
+uniform vec2 uTexel;
+uniform float uRadius;
+uniform float uSigma;
+void main() {
+    vec4 sum = vec4(0.0);
+    float wsum = 0.0;
+    for (int i = -15; i <= 15; i++) {
+        float fi = float(i);
+        float w = exp(-(fi * fi) / (2.0 * uSigma * uSigma));
+        sum += texture(uTex, vUV + vec2(0.0, fi * uRadius * uTexel.y)) * w;
+        wsum += w;
+    }
+    fragColor = sum / max(wsum, 0.0001);
+}
+)GLSL";
+
+// 程序内生成的输入纹理(噪声 + 渐变 + 色块), 作为真实的纹理输入
+const char* FS_SCENE = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform float uSeed;
+float hash21(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+void main() {
+    vec2 uv = vUV;
+    vec3 c = vec3(0.0);
+    c += vec3(0.10, 0.22, 0.42) * (1.0 - uv.y);
+    c += vec3(0.55, 0.30, 0.12) * uv.y;
+    for (int k = 0; k < 8; k++) {
+        float fk = float(k) + 1.0;
+        float a = uv.x * 9.0 * fk + uSeed * (fk * 0.7);
+        c += vec3(sin(a) * 0.035, cos(a * 1.3) * 0.035, sin(a * 0.7 + 1.1) * 0.035);
+    }
+    vec2 q = floor(uv * vec2(48.0, 27.0));
+    float noise = hash21(q + uSeed * 0.001);
+    c *= 0.70 + 0.60 * noise;
+    float grid = step(0.985, fract(uv.x * 32.0)) + step(0.985, fract(uv.y * 18.0));
+    c += vec3(0.06) * grid;
+    c = clamp(c, 0.0, 1.0);
+    fragColor = vec4(c, 1.0);
+}
+)GLSL";
+
+// 逐点写入的 pass 使用的顶点着色器(真实位置在片元里由 gl_VertexID 算)
+const char* kPointVS = R"GLSL(#version 300 es
+layout(location = 0) in vec2 aPos;
+out vec2 vUV;
+void main() {
+    vUV = aPos * 0.5 + 0.5;
+    gl_PointSize = 1.0;
+    gl_Position = vec4(aPos, 0.0, 1.0);
+}
+)GLSL";
+
+// LK 累加: 累加 [gx^2, gx*gy, gy^2, err](加法混合写入 8x8 累加器)
+const char* FS_FT_ACC = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uCurr;
+uniform sampler2D uPrev;
+uniform vec2 uSeed;
+uniform vec2 uLevelSize;
+uniform vec2 uLevelTexel;
+uniform vec2 uDisp;
+void main() {
+    float fi = float(gl_VertexID);
+    float j = mod(fi, uSeed.x);
+    float i = floor(fi / uSeed.x);
+    vec2 uv = (vec2(j, i) + 0.5) / uLevelSize;
+    vec2 t = uLevelTexel;
+    float tl = texture(uCurr, uv - vec2(t.x, 0.0)).r;
+    float tr = texture(uCurr, uv + vec2(t.x, 0.0)).r;
+    float tb = texture(uCurr, uv - vec2(0.0, t.y)).r;
+    float tt = texture(uCurr, uv + vec2(0.0, t.y)).r;
+    float gx = (tr - tl) * 0.5;
+    float gy = (tt - tb) * 0.5;
+    vec2 p = uv + uDisp;
+    float pr = texture(uPrev, p + vec2(t.x, 0.0)).r;
+    float pl = texture(uPrev, p - vec2(t.x, 0.0)).r;
+    float pu = texture(uPrev, p + vec2(0.0, t.y)).r;
+    float pd = texture(uPrev, p - vec2(0.0, t.y)).r;
+    float pgx = (pr - pl) * 0.5;
+    float pgy = (pu - pd) * 0.5;
+    float ic = texture(uPrev, p).r;
+    float err = texture(uCurr, uv).r - ic;
+    // 当前帧与参考帧的梯度一起参与, 保证两次采样都真正被使用
+    float gxc = (gx + pgx) * 0.5;
+    float gyc = (gy + pgy) * 0.5;
+    fragColor = vec4(gxc * gxc, gxc * gyc, gyc * gyc, err);
+}
+)GLSL";
+
+// 64 路归约 + 求解 2x2 线性系统, 输出新的位移估计
+const char* FS_FT_UPDATE = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uAcc;
+uniform vec2 uDisp;
+uniform float uIter;
+void main() {
+    float s0 = 0.0;
+    float s1 = 0.0;
+    float s2 = 0.0;
+    float s3 = 0.0;
+    for (int y = 0; y < 8; y++) {
+        for (int x = 0; x < 8; x++) {
+            vec4 a = texelFetch(uAcc, ivec2(x, y), 0);
+            s0 += a.x;
+            s1 += a.y;
+            s2 += a.z;
+            s3 += a.w;
+        }
+    }
+    s0 = s0 / 64.0 + 0.001;
+    s1 = s1 / 64.0;
+    s2 = s2 / 64.0 + 0.001;
+    s3 = s3 / 64.0;
+    float det = s0 * s2 - s1 * s1;
+    if (abs(det) < 0.00002) {
+        det = (det < 0.0) ? -0.00002 : 0.00002;
+    }
+    vec2 rhs = vec2(-(s2 * s1 - s1 * s3), -(s0 * s3 - s1 * s1)) / det;
+    float len = length(rhs);
+    if (len > 3.0) {
+        rhs = rhs * (3.0 / len);
+    }
+    vec2 nd = uDisp + rhs * 0.6 + vec2(uIter * 0.0);
+    nd = clamp(nd, vec2(-0.05), vec2(0.05));
+    fragColor = vec4(nd, abs(s3), 1.0);
+}
+)GLSL";
+
+// 描述子提取: 每个 fragment 输出一个描述子的 64 维梯度方向直方图(64x4096 纹理)
+const char* FS_FM_HIST = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uTex;
+uniform vec2 uTexel;
+uniform float uFrame;
+void main() {
+    int cell = int(vUV.x * 64.0);
+    vec2 p = texture(uTex, vec2(0.5, 0.5)).rg;
+    float px = p.x * 48.0 + 0.5;
+    float py = p.y * 27.0 + 0.5;
+    float a = fract(px);
+    float b = fract(py);
+    vec2 base = (vec2(floor(px), floor(py)) + 0.5 + vec2(a, b)) / vec2(48.0, 27.0);
+    int bx = cell - (cell / 8) * 8;
+    int by = cell / 8;
+    vec2 off = (vec2(float(bx), float(by)) - vec2(3.5)) * 8.0 * uTexel;
+    vec2 c = base + off;
+    float acc = 0.0;
+    for (int s = 0; s < 4; s++) {
+        vec2 d = vec2(0.0);
+        if (s == 0) {
+            d = vec2(1.0, 0.0);
+        } else if (s == 1) {
+            d = vec2(-1.0, 0.0);
+        } else if (s == 2) {
+            d = vec2(0.0, 1.0);
+        } else {
+            d = vec2(0.0, -1.0);
+        }
+        for (int k = 1; k <= 8; k++) {
+            float fk = float(k);
+            vec2 sp = c + d * fk * 2.0 * uTexel;
+            float lc = texture(uTex, sp).g;
+            float lx = texture(uTex, sp + vec2(uTexel.x * 2.0, 0.0)).g;
+            float ly = texture(uTex, sp + vec2(0.0, uTexel.y * 2.0)).g;
+            float ang = atan(ly - lc, lx - lc);
+            float phi = (ang + 3.14159265) / 6.2831853;
+            float bin = phi * 8.0 + float(bx) * 0.74 + float(by) * 0.37 + uFrame * 0.013;
+            float w = 0.0;
+            if (abs(bin - float(cell)) < 1.0) {
+                w = 1.0 - abs(bin - float(cell));
+            }
+            acc += w * (0.3 + 0.7 * abs(sin(fk * 0.7 + uFrame * 0.01)));
+        }
+    }
+    fragColor = vec4(acc, acc * 0.25, acc * 0.0625, 1.0);
+}
+)GLSL";
+
+// 暴力匹配: 每个 fragment 比较一对描述子, 在 fragment 内部做归约
+const char* FS_FM_MATCH = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uDesc;
+uniform sampler2D uSummary;
+uniform vec2 uTile;
+uniform float uFrame;
+void main() {
+    ivec2 px = ivec2(gl_FragCoord.xy);
+    px.y += int(uTile.y);
+    vec4 sv = texelFetch(uSummary, ivec2(0, 0), 0);
+    vec4 a0 = texelFetch(uDesc, ivec2(0, px.y), 0);
+    vec4 a1 = texelFetch(uDesc, ivec2(1, px.y), 0);
+    vec4 a2 = texelFetch(uDesc, ivec2(2, px.y), 0);
+    vec4 a3 = texelFetch(uDesc, ivec2(3, px.y), 0);
+    int q = px.x + int(sv.x * 7.0 + uFrame);
+    q = q - (q / 4096) * 4096;
+    float dist = 0.0;
+    for (int k = 0; k < 68; k++) {
+        vec4 b = texelFetch(uDesc, ivec2(k, q), 0);
+        dist += dot(a0, b) * 0.25;
+        dist -= dot(a1, b) * 0.125;
+        dist += dot(a2, b) * 0.0625;
+        dist -= dot(a3, b) * 0.03125;
+    }
+    dist = abs(dist) * 0.015;
+    float v = sv.x * 0.5 + 0.25;
+    fragColor = vec4(dist * v, dist * 0.5, v * 0.5, 1.0);
+}
+)GLSL";
+
+// 把匹配残差写回描述子纹理首行, 建立"上一次迭代的输出被下一次使用"的依赖
+const char* FS_FM_SUMMARY = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uMatch;
+void main() {
+    vec2 g = gl_PointCoord - vec2(0.5);
+    if (dot(g, g) > 0.25) {
+        discard;
+    }
+    vec4 m = texture(uMatch, vec2(0.01));
+    fragColor = vec4(fract(m.r * 3.0 + 0.125), m.g, m.b, 1.0);
+}
+)GLSL";
+
+// ---------------- Fluid Simulation (1024x1024) ----------------
+
+const char* FS_FLUID_ADV = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uVel;
+uniform sampler2D uSrc;
+uniform vec2 uTexel;
+uniform float uDt;
+void main() {
+    vec2 v = texture(uVel, vUV).xy;
+    vec2 p = vUV - v * uDt;
+    vec4 a = texture(uSrc, p + vec2(uTexel.x, 0.0));
+    vec4 b = texture(uSrc, p - vec2(uTexel.x, 0.0));
+    vec4 c = texture(uSrc, p + vec2(0.0, uTexel.y));
+    vec4 d = texture(uSrc, p - vec2(0.0, uTexel.y));
+    fragColor = (a + b + c + d) * 0.25;
+}
+)GLSL";
+
+const char* FS_FLUID_DIVERG = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uVel;
+uniform vec2 uTexel;
+void main() {
+    float l = texture(uVel, vUV - vec2(uTexel.x, 0.0)).x;
+    float r = texture(uVel, vUV + vec2(uTexel.x, 0.0)).x;
+    float b = texture(uVel, vUV - vec2(0.0, uTexel.y)).y;
+    float t = texture(uVel, vUV + vec2(0.0, uTexel.y)).y;
+    float div = ((r - l) + (t - b)) * 0.5;
+    fragColor = vec4(div, 0.0, 0.0, 1.0);
+}
+)GLSL";
+
+const char* FS_FLUID_JACOBI = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uPres;
+uniform sampler2D uDiv;
+uniform vec2 uTexel;
+uniform float uRbeta;
+void main() {
+    float l = texture(uPres, vUV - vec2(uTexel.x, 0.0)).x;
+    float r = texture(uPres, vUV + vec2(uTexel.x, 0.0)).x;
+    float b = texture(uPres, vUV - vec2(0.0, uTexel.y)).x;
+    float t = texture(uPres, vUV + vec2(0.0, uTexel.y)).x;
+    float div = texture(uDiv, vUV).x;
+    fragColor = vec4((l + r + b + t + div) * uRbeta, 0.0, 0.0, 1.0);
+}
+)GLSL";
+
+const char* FS_FLUID_GRADSUB = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uPres;
+uniform sampler2D uVel;
+uniform vec2 uTexel;
+uniform float uFrame;
+void main() {
+    float l = texture(uPres, vUV - vec2(uTexel.x, 0.0)).x;
+    float r = texture(uPres, vUV + vec2(uTexel.x, 0.0)).x;
+    float b = texture(uPres, vUV - vec2(0.0, uTexel.y)).x;
+    float t = texture(uPres, vUV + vec2(0.0, uTexel.y)).x;
+    vec2 vel = texture(uVel, vUV).xy;
+    vec2 grad = vec2(r - l, t - b) * 0.5;
+    vec2 nv = (vel - grad) * 0.999;
+    nv.x += sin(uFrame * 0.013 + vUV.y * 9.0) * 0.02;
+    fragColor = vec4(nv, 0.0, 1.0);
+}
+)GLSL";
+
+const char* FS_FLUID_DISPLAY = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uVel;
+void main() {
+    vec2 v = texture(uVel, vUV).xy;
+    float sp = length(v);
+    vec3 c = vec3(0.02, 0.04, 0.09);
+    c += vec3(0.15, 0.45, 0.95) * min(sp * 3.0, 1.0);
+    c += vec3(0.95, 0.75, 0.30) * min(max(sp - 0.35, 0.0) * 2.0, 1.0);
+    fragColor = vec4(c, 1.0);
+}
+)GLSL";

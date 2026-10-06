@@ -1,0 +1,738 @@
+// ---------------------------------------------------------------------------
+// 各项负载
+// ---------------------------------------------------------------------------
+
+// 1) Background Blur: 两趟可分离高斯(31 抽样, 半径 15)@1920x1080, 2 pass/帧
+FrameStats loadBlur(int frames)
+{
+    FrameStats st;
+    st.unit = "Mpx/s";
+    if (!beginLoad("Background Blur")) {
+        st.error = gpu7Error;
+        return st;
+    }
+    const int W = 1920;
+    const int H = 1080;
+    Target scene;
+    Target tmp;
+    Target out;
+    if (!createTarget(scene, W, H, GL_RGBA8) || !createTarget(tmp, W, H, GL_RGBA8) ||
+        !createTarget(out, W, H, GL_RGBA8)) {
+        st.error = "blur fbo create failed";
+        destroyTarget(scene);
+        destroyTarget(tmp);
+        destroyTarget(out);
+        endLoad();
+        return st;
+    }
+    GLuint pScene = getProg(P_SCENE);
+    GLuint pH = getProg(P_BLUR_H);
+    GLuint pV = getProg(P_BLUR_V);
+    if (pScene == 0 || pH == 0 || pV == 0) {
+        st.error = gpu7Error.empty() ? std::string("blur shader failed") : gpu7Error;
+        destroyTarget(scene);
+        destroyTarget(tmp);
+        destroyTarget(out);
+        endLoad();
+        return st;
+    }
+    glDisable(GL_BLEND);
+    bindTarget(scene);
+    glUseProgram(pScene);
+    setF1(pScene, "uSeed", 0.5f);
+    drawFullscreen();
+
+    const float radius = 15.0f;
+    const float sigma = 7.5f;
+    const double perFramePixels = (double)W * (double)H * 2.0;
+    Timer timer;
+    int total = kWarmup + frames;
+    for (int fr = 0; fr < total; ++fr) {
+        bindTarget(tmp);
+        glUseProgram(pH);
+        bindTex(0, scene.tex);
+        setI1(pH, "uTex", 0);
+        set2F(pH, "uTexel", 1.0f / (float)W, 1.0f / (float)H);
+        setF1(pH, "uRadius", radius);
+        setF1(pH, "uSigma", sigma);
+        drawFullscreen();
+
+        bindTarget(out);
+        glUseProgram(pV);
+        bindTex(0, tmp.tex);
+        setI1(pV, "uTex", 0);
+        set2F(pV, "uTexel", 1.0f / (float)W, 1.0f / (float)H);
+        setF1(pV, "uRadius", radius);
+        setF1(pV, "uSigma", sigma);
+        drawFullscreen();
+        timer.frame();
+        if (fr == kWarmup) {
+            timer.start();
+        }
+    }
+    float chk = 0.0f;
+    checksumTex(out.fbo, W, H, &chk);
+    timer.finish(st, perFramePixels, "Mpx/s", 1, 1.0 / 1.0e6);
+    OH_LOG_Print(LOG_APP, LOG_INFO, 0x1234, kTag, "blur checksum %{public}f", chk);
+    destroyTarget(scene);
+    destroyTarget(tmp);
+    destroyTarget(out);
+    endLoad();
+    return st;
+}
+
+// 2) Face Tracking: 4 级金字塔 + 每级 5 次 LK 迭代(共 20 次)@1920x1080
+struct PyramidLevel {
+    Target img;
+    Target res;
+    int w = 0;
+    int h = 0;
+};
+
+FrameStats loadFaceTracking(int frames)
+{
+    FrameStats st;
+    st.unit = "Mpx/s";
+    if (!beginLoad("Face Tracking")) {
+        st.error = gpu7Error;
+        return st;
+    }
+    const int W = 1920;
+    const int H = 1080;
+    const int LEVELS = 4;
+    const int ITERS = 5;
+    const int SEED_X = 64;
+    const int SEED_Y = 64;
+    PyramidLevel lv[LEVELS];
+    Target accum;
+    Target out;
+    bool ok = createTarget(accum, 8, 8, GL_RGBA16F) && createTarget(out, W, H, GL_RGBA8);
+    for (int l = 0; l < LEVELS && ok; ++l) {
+        lv[l].w = W >> l;
+        lv[l].h = H >> l;
+        ok = createTarget(lv[l].img, lv[l].w, lv[l].h, GL_RGBA16F) &&
+             createTarget(lv[l].res, lv[l].w, lv[l].h, GL_RGBA16F);
+    }
+    GLuint pScene = getProg(P_SCENE);
+    GLuint pAcc = getProg(P_FT_ACC);
+    GLuint pUpd = getProg(P_FT_UPDATE);
+    GLuint pCopy = getProg(P_BLUR_H);
+    if (!ok || pScene == 0 || pAcc == 0 || pUpd == 0 || pCopy == 0) {
+        st.error = gpu7Error.empty() ? std::string("face tracking init failed") : gpu7Error;
+        for (int l = 0; l < LEVELS; ++l) {
+            destroyTarget(lv[l].img);
+            destroyTarget(lv[l].res);
+        }
+        destroyTarget(accum);
+        destroyTarget(out);
+        endLoad();
+        return st;
+    }
+    glDisable(GL_BLEND);
+    for (int l = 0; l < LEVELS; ++l) {
+        bindTarget(lv[l].img);
+        glUseProgram(pScene);
+        setF1(pScene, "uSeed", 2.5f + (float)l * 0.37f);
+        drawFullscreen();
+    }
+
+    const double perFramePixels = (double)W * (double)H * (double)(LEVELS * ITERS);
+    Timer timer;
+    int total = kWarmup + frames;
+    for (int fr = 0; fr < total; ++fr) {
+        float dispx = 0.0015f * (float)(fr % 7);
+        float dispy = -0.0011f * (float)(fr % 5);
+        for (int l = 0; l < LEVELS; ++l) {
+            for (int it = 0; it < ITERS; ++it) {
+                // a) 加法混合把 4096 个采样点的 Hessian/残差累加到 8x8 累加器
+                glBindFramebuffer(GL_FRAMEBUFFER, accum.fbo);
+                glViewport(0, 0, accum.w, accum.h);
+                glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+                glClear(GL_COLOR_BUFFER_BIT);
+                glEnable(GL_BLEND);
+                glBlendFunc(GL_ONE, GL_ONE);
+                glUseProgram(pAcc);
+                bindTex(0, lv[l].img.tex);
+                bindTex(1, lv[l].res.tex);
+                setI1(pAcc, "uCurr", 0);
+                setI1(pAcc, "uPrev", 1);
+                set2F(pAcc, "uSeed", (float)SEED_X, (float)SEED_Y);
+                set2F(pAcc, "uLevelSize", (float)lv[l].w, (float)lv[l].h);
+                set2F(pAcc, "uLevelTexel", 1.0f / (float)lv[l].w, 1.0f / (float)lv[l].h);
+                set2F(pAcc, "uDisp", dispx, dispy);
+                glBindVertexArray(g_pointVao);
+                glDrawArrays(GL_POINTS, 0, SEED_X * SEED_Y);
+                glBindVertexArray(0);
+                glDisable(GL_BLEND);
+
+                // b) 64 路归约 + 求解 2x2 系统(输出进入下一轮迭代的 uPrev)
+                bindTarget(lv[l].res);
+                glUseProgram(pUpd);
+                bindTex(0, accum.tex);
+                setI1(pUpd, "uAcc", 0);
+                set2F(pUpd, "uDisp", dispx, dispy);
+                setF1(pUpd, "uIter", (float)it);
+                drawFullscreen();
+
+                dispx += 0.00002f;
+                dispy -= 0.00001f;
+            }
+        }
+        // c) 最粗一级的结果放大回 1920x1080 作为本帧输出
+        bindTarget(out);
+        glUseProgram(pCopy);
+        bindTex(0, lv[LEVELS - 1].res.tex);
+        setI1(pCopy, "uTex", 0);
+        set2F(pCopy, "uTexel", 1.0f / (float)lv[LEVELS - 1].w, 1.0f / (float)lv[LEVELS - 1].h);
+        setF1(pCopy, "uRadius", 3.0f);
+        setF1(pCopy, "uSigma", 3.0f);
+        drawFullscreen();
+        timer.frame();
+        if (fr == kWarmup) {
+            timer.start();
+        }
+    }
+    float chk = 0.0f;
+    checksumTex(out.fbo, W, H, &chk);
+    timer.finish(st, perFramePixels, "Mpx/s", 1, 1.0 / 1.0e6);
+    OH_LOG_Print(LOG_APP, LOG_INFO, 0x1234, kTag, "face tracking checksum %{public}f", chk);
+    for (int l = 0; l < LEVELS; ++l) {
+        destroyTarget(lv[l].img);
+        destroyTarget(lv[l].res);
+    }
+    destroyTarget(accum);
+    destroyTarget(out);
+    endLoad();
+    return st;
+}
+
+// 3) Feature Matching: 4096 个 64 维描述子 + 暴力匹配(每帧 4096x4096 对)
+FrameStats loadFeatureMatching(int frames)
+{
+    FrameStats st;
+    st.unit = "Gpair/s";
+    st.metricDigits = 2;
+    if (!beginLoad("Feature Matching")) {
+        st.error = gpu7Error;
+        return st;
+    }
+    const int DESC = 4096;
+    const int DIM = 64;
+    const int TILE_H = 256;
+    const int TILES = 16;
+    Target scene;
+    Target desc;
+    Target match;
+    if (!createTarget(scene, 1920, 1080, GL_RGBA8) || !createTarget(desc, DIM, DESC, GL_RGBA16F) ||
+        !createTarget(match, DESC, TILE_H, GL_RGBA8)) {
+        st.error = "feature matching fbo create failed";
+        destroyTarget(scene);
+        destroyTarget(desc);
+        destroyTarget(match);
+        endLoad();
+        return st;
+    }
+    GLuint pScene = getProg(P_SCENE);
+    GLuint pHist = getProg(P_FM_HIST);
+    GLuint pMatch = getProg(P_FM_MATCH);
+    GLuint pSum = getProg(P_FM_SUMMARY);
+    if (pScene == 0 || pHist == 0 || pMatch == 0 || pSum == 0) {
+        st.error = gpu7Error.empty() ? std::string("feature matching shader failed") : gpu7Error;
+        destroyTarget(scene);
+        destroyTarget(desc);
+        destroyTarget(match);
+        endLoad();
+        return st;
+    }
+    glDisable(GL_BLEND);
+    bindTarget(scene);
+    glUseProgram(pScene);
+    setF1(pScene, "uSeed", 7.25f);
+    drawFullscreen();
+
+    const double perFramePairs = (double)DESC * (double)TILE_H * (double)TILES;
+    Timer timer;
+    int total = kWarmup + frames;
+    for (int fr = 0; fr < total; ++fr) {
+        // pass 1: 提取 4096 个 64 维梯度方向直方图描述子
+        bindTarget(desc);
+        glUseProgram(pHist);
+        bindTex(0, scene.tex);
+        setI1(pHist, "uTex", 0);
+        set2F(pHist, "uTexel", 1.0f / 1920.0f, 1.0f / 1080.0f);
+        setF1(pHist, "uFrame", (float)fr);
+        drawFullscreen();
+
+        // pass 2: 暴力匹配, 16 个 tile(每个 tile 比较 4096x256 对描述子)
+        for (int t = 0; t < TILES; ++t) {
+            bindTarget(match);
+            glUseProgram(pMatch);
+            bindTex(0, desc.tex);
+            bindTex(1, desc.tex);
+            setI1(pMatch, "uDesc", 0);
+            setI1(pMatch, "uSummary", 1);
+            set2F(pMatch, "uTile", 0.0f, (float)(t * TILE_H));
+            setF1(pMatch, "uFrame", (float)((fr * 3 + t) % 17));
+            drawFullscreen();
+        }
+
+        // pass 3: 把匹配残差写回描述子纹理首行(下一帧的 pass 1/2 会读到它,
+        //         从而保证帧与帧之间存在真实的依赖关系)
+        glBindFramebuffer(GL_FRAMEBUFFER, desc.fbo);
+        glViewport(0, 0, 1, 1);
+        glUseProgram(pSum);
+        bindTex(2, match.tex);
+        setI1(pSum, "uMatch", 2);
+        glBindVertexArray(g_pointVao);
+        glDrawArrays(GL_POINTS, 0, 1);
+        glBindVertexArray(0);
+        timer.frame();
+        if (fr == kWarmup) {
+            timer.start();
+        }
+    }
+    float chk = 0.0f;
+    checksumTex(match.fbo, DESC, TILE_H, &chk);
+    timer.finish(st, perFramePairs, "Gpair/s", 2, 1.0 / 1.0e9);
+    OH_LOG_Print(LOG_APP, LOG_INFO, 0x1234, kTag, "feature matching checksum %{public}f", chk);
+    destroyTarget(scene);
+    destroyTarget(desc);
+    destroyTarget(match);
+    endLoad();
+    return st;
+}
+
+// 4) Fluid Simulation: GPU stable fluids @1024x1024, 每帧 48 次 Jacobi 压力迭代
+FrameStats loadFluid(int frames)
+{
+    FrameStats st;
+    st.unit = "Mcell/s";
+    if (!beginLoad("Fluid Simulation")) {
+        st.error = gpu7Error;
+        return st;
+    }
+    const int N = 1024;
+    const int JACOBI = 48;
+    Target velA;
+    Target velB;
+    Target div;
+    Target presA;
+    Target presB;
+    Target dyeA;
+    Target dyeB;
+    Target disp;
+    bool ok = createTarget(velA, N, N, GL_RGBA16F) && createTarget(velB, N, N, GL_RGBA16F) &&
+              createTarget(div, N, N, GL_RGBA16F) && createTarget(presA, N, N, GL_RGBA16F) &&
+              createTarget(presB, N, N, GL_RGBA16F) && createTarget(dyeA, N, N, GL_RGBA16F) &&
+              createTarget(dyeB, N, N, GL_RGBA16F) && createTarget(disp, 1920, 1080, GL_RGBA8);
+    GLuint pAdv = getProg(P_FLUID_ADV);
+    GLuint pDiv = getProg(P_FLUID_DIVERG);
+    GLuint pJac = getProg(P_FLUID_JACOBI);
+    GLuint pGrad = getProg(P_FLUID_GRADSUB);
+    GLuint pDisp = getProg(P_FLUID_DISPLAY);
+    if (!ok || pAdv == 0 || pDiv == 0 || pJac == 0 || pGrad == 0 || pDisp == 0) {
+        st.error = gpu7Error.empty() ? std::string("fluid init failed") : gpu7Error;
+        destroyTarget(velA);
+        destroyTarget(velB);
+        destroyTarget(div);
+        destroyTarget(presA);
+        destroyTarget(presB);
+        destroyTarget(dyeA);
+        destroyTarget(dyeB);
+        destroyTarget(disp);
+        endLoad();
+        return st;
+    }
+    // 初始速度场: 用平流 pass 基于"散度纹理"铺一层确定性的旋度场
+    glDisable(GL_BLEND);
+    bindTarget(velA);
+    glUseProgram(pAdv);
+    bindTex(0, div.tex);
+    bindTex(1, dyeA.tex);
+    setI1(pAdv, "uVel", 0);
+    setI1(pAdv, "uSrc", 1);
+    set2F(pAdv, "uTexel", 1.0f / (float)N, 1.0f / (float)N);
+    setF1(pAdv, "uDt", 0.0f);
+    drawFullscreen();
+
+    const float texel = 1.0f / (float)N;
+    const float rbeta = 0.25f;
+    const double perFrameCells = (double)N * (double)N * (double)(JACOBI + 5);
+    Timer timer;
+    int total = kWarmup + frames;
+    for (int fr = 0; fr < total; ++fr) {
+        // a) 染料/速度平流 4 次
+        for (int i = 0; i < 4; ++i) {
+            Target& dst = (i % 2 == 0) ? velB : velA;
+            Target& src = (i % 2 == 0) ? velA : velB;
+            bindTarget(dst);
+            glUseProgram(pAdv);
+            bindTex(0, src.tex);
+            bindTex(1, dyeA.tex);
+            setI1(pAdv, "uVel", 0);
+            setI1(pAdv, "uSrc", 1);
+            set2F(pAdv, "uTexel", texel, texel);
+            setF1(pAdv, "uDt", 0.016f + 0.001f * (float)i);
+            drawFullscreen();
+        }
+        // b) 散度
+        bindTarget(div);
+        glUseProgram(pDiv);
+        bindTex(0, velA.tex);
+        setI1(pDiv, "uVel", 0);
+        set2F(pDiv, "uTexel", texel, texel);
+        drawFullscreen();
+        // c) 压力迭代: 播撒源项 + (JACOBI-1) 次 Jacobi 迭代
+        bindTarget(presB);
+        glUseProgram(pJac);
+        bindTex(0, presA.tex);
+        bindTex(1, div.tex);
+        setI1(pJac, "uPres", 0);
+        setI1(pJac, "uDiv", 1);
+        set2F(pJac, "uTexel", texel, texel);
+        setF1(pJac, "uRbeta", 0.5f);
+        drawFullscreen();
+        for (int i = 1; i < JACOBI; ++i) {
+            Target& dst = (i % 2 == 1) ? presA : presB;
+            Target& src = (i % 2 == 1) ? presB : presA;
+            bindTarget(dst);
+            glUseProgram(pJac);
+            bindTex(0, src.tex);
+            bindTex(1, div.tex);
+            setI1(pJac, "uPres", 0);
+            setI1(pJac, "uDiv", 1);
+            set2F(pJac, "uTexel", texel, texel);
+            setF1(pJac, "uRbeta", rbeta);
+            drawFullscreen();
+        }
+        // d) 压力梯度减除
+        bindTarget(velB);
+        glUseProgram(pGrad);
+        bindTex(0, presA.tex);
+        bindTex(1, velA.tex);
+        setI1(pGrad, "uPres", 0);
+        setI1(pGrad, "uVel", 1);
+        set2F(pGrad, "uTexel", texel, texel);
+        setF1(pGrad, "uFrame", (float)fr);
+        drawFullscreen();
+        // e) 染料输送(结果写回 velA, 供下一帧继续使用)
+        bindTarget(dyeB);
+        glUseProgram(pAdv);
+        bindTex(0, velB.tex);
+        bindTex(1, dyeA.tex);
+        setI1(pAdv, "uVel", 0);
+        setI1(pAdv, "uSrc", 1);
+        set2F(pAdv, "uTexel", texel, texel);
+        setF1(pAdv, "uDt", 0.5f);
+        drawFullscreen();
+        bindTarget(velA);
+        glUseProgram(pAdv);
+        bindTex(0, velB.tex);
+        bindTex(1, dyeB.tex);
+        setI1(pAdv, "uVel", 0);
+        setI1(pAdv, "uSrc", 1);
+        set2F(pAdv, "uTexel", texel, texel);
+        setF1(pAdv, "uDt", 0.0f);
+        drawFullscreen();
+        // f) 显示到 1920x1080
+        bindTarget(disp);
+        glUseProgram(pDisp);
+        bindTex(0, velA.tex);
+        setI1(pDisp, "uVel", 0);
+        drawFullscreen();
+        timer.frame();
+        if (fr == kWarmup) {
+            timer.start();
+        }
+    }
+    float chk = 0.0f;
+    checksumTex(disp.fbo, 1920, 1080, &chk);
+    timer.finish(st, perFrameCells, "Mcell/s", 1, 1.0 / 1.0e6);
+    OH_LOG_Print(LOG_APP, LOG_INFO, 0x1234, kTag, "fluid checksum %{public}f", chk);
+    destroyTarget(velA);
+    destroyTarget(velB);
+    destroyTarget(div);
+    destroyTarget(presA);
+    destroyTarget(presB);
+    destroyTarget(dyeA);
+    destroyTarget(dyeB);
+    destroyTarget(disp);
+    endLoad();
+    return st;
+}
+
+// 5) Horizon Detection: Sobel + Hough(180 角度 x 1024 rho 桶)@1920x1080
+FrameStats loadHorizon(int frames)
+{
+    FrameStats st;
+    st.unit = "Mvote/s";
+    if (!beginLoad("Horizon Detection")) {
+        st.error = gpu7Error;
+        return st;
+    }
+    const int W = 1920;
+    const int H = 1080;
+    const int EW = 960;
+    const int EH = 540;
+    const int ACC = 1024;
+    const int SUBSTEPS = 32;
+    const int VOTES_A = 1 << 14;
+    const int VOTES_B = 1 << 14;
+    Target scene;
+    Target edges;
+    Target accA;
+    Target accB;
+    Target out;
+    bool ok = createTarget(scene, W, H, GL_RGBA8) && createTarget(edges, EW, EH, GL_RGBA16F) &&
+              createTarget(accA, ACC, ACC, GL_RGBA16F) && createTarget(accB, ACC, ACC, GL_RGBA16F) &&
+              createTarget(out, W, H, GL_RGBA8);
+    GLuint pScene = getProg(P_SCENE);
+    GLuint pEdge = getProg(P_HOUGH_EDGE);
+    GLuint pVa = getProg(P_HOUGH_VOTE_A);
+    GLuint pVb = getProg(P_HOUGH_VOTE_B);
+    GLuint pDraw = getProg(P_HOUGH_DRAW);
+    if (!ok || pScene == 0 || pEdge == 0 || pVa == 0 || pVb == 0 || pDraw == 0) {
+        st.error = gpu7Error.empty() ? std::string("hough init failed") : gpu7Error;
+        destroyTarget(scene);
+        destroyTarget(edges);
+        destroyTarget(accA);
+        destroyTarget(accB);
+        destroyTarget(out);
+        endLoad();
+        return st;
+    }
+    glDisable(GL_BLEND);
+    bindTarget(scene);
+    glUseProgram(pScene);
+    setF1(pScene, "uSeed", 11.5f);
+    drawFullscreen();
+
+    const double perFrameVotes = (double)SUBSTEPS * ((double)VOTES_A + (double)VOTES_B * 180.0);
+    Timer timer;
+    int total = kWarmup + frames;
+    for (int fr = 0; fr < total; ++fr) {
+        for (int i = 0; i < SUBSTEPS; ++i) {
+            Target& dst = (i % 2 == 0) ? accB : accA;
+            Target& src = (i % 2 == 0) ? accA : accB;
+            glBindFramebuffer(GL_FRAMEBUFFER, dst.fbo);
+            glViewport(0, 0, ACC, ACC);
+            glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_ONE, GL_ONE);
+            // 投票 A: 每个点投一个角度
+            glUseProgram(pVa);
+            bindTex(0, edges.tex);
+            setI1(pVa, "uEdges", 0);
+            setF1(pVa, "uScale", (float)ACC);
+            setF1(pVa, "uAngleScale", 180.0f / 3.14159265f);
+            glBindVertexArray(g_pointVao);
+            glDrawArrays(GL_POINTS, 0, VOTES_A);
+            // 投票 B: 每个点覆盖全部 180 个角度
+            glUseProgram(pVb);
+            bindTex(0, edges.tex);
+            setI1(pVb, "uEdges", 0);
+            setF1(pVb, "uScale", (float)ACC);
+            setF1(pVb, "uFrame", (float)(fr * 7 + i));
+            glDrawArrays(GL_POINTS, 0, VOTES_B);
+            glBindVertexArray(0);
+            glDisable(GL_BLEND);
+            // Sobel 边缘(输入是上一轮的累加器, 保证跨 pass 依赖)
+            bindTarget(edges);
+            glUseProgram(pEdge);
+            bindTex(0, src.tex);
+            setI1(pEdge, "uTex", 0);
+            set2F(pEdge, "uTexel", 1.0f / (float)ACC, 1.0f / (float)ACC);
+            drawFullscreen();
+        }
+        bindTarget(out);
+        glUseProgram(pDraw);
+        bindTex(0, accA.tex);
+        setI1(pDraw, "uAcc", 0);
+        setF1(pDraw, "uFrame", (float)fr);
+        drawFullscreen();
+        timer.frame();
+        if (fr == kWarmup) {
+            timer.start();
+        }
+    }
+    float chk = 0.0f;
+    checksumTex(out.fbo, W, H, &chk);
+    timer.finish(st, perFrameVotes, "Mvote/s", 1, 1.0 / 1.0e6);
+    OH_LOG_Print(LOG_APP, LOG_INFO, 0x1234, kTag, "hough checksum %{public}f", chk);
+    destroyTarget(scene);
+    destroyTarget(edges);
+    destroyTarget(accA);
+    destroyTarget(accB);
+    destroyTarget(out);
+    endLoad();
+    return st;
+}
+
+// 6) Particle Physics: 1048576 个粒子, 每帧更新 524288 个 @1024x1024 状态纹理
+FrameStats loadParticles(int frames)
+{
+    FrameStats st;
+    st.unit = "Mparticle/s";
+    if (!beginLoad("Particle Physics")) {
+        st.error = gpu7Error;
+        return st;
+    }
+    const int N = 1024;
+    const int COUNT = N * N;
+    const int PER_FRAME = COUNT / 2;
+    Target stateA;
+    Target stateB;
+    Target out;
+    if (!createTarget(stateA, N, N, GL_RGBA32F) || !createTarget(stateB, N, N, GL_RGBA32F) ||
+        !createTarget(out, 1920, 1080, GL_RGBA16F)) {
+        st.error = "particle fbo create failed";
+        destroyTarget(stateA);
+        destroyTarget(stateB);
+        destroyTarget(out);
+        endLoad();
+        return st;
+    }
+    GLuint pUpd = getProg(P_PART_UPDATE);
+    GLuint pDraw = getProg(P_PART_DRAW);
+    if (pUpd == 0 || pDraw == 0) {
+        st.error = gpu7Error.empty() ? std::string("particle shader failed") : gpu7Error;
+        destroyTarget(stateA);
+        destroyTarget(stateB);
+        destroyTarget(out);
+        endLoad();
+        return st;
+    }
+    glDisable(GL_BLEND);
+    // 初始状态(位置/速率), 由更新 pass 用 uDt = 0 写入
+    bindTarget(stateA);
+    glUseProgram(pUpd);
+    bindTex(0, stateB.tex);
+    setI1(pUpd, "uState", 0);
+    setF1(pUpd, "uDt", 0.0f);
+    setF1(pUpd, "uFrame", 16.0f);
+    drawFullscreen();
+    bindTarget(stateB);
+    glUseProgram(pUpd);
+    bindTex(0, stateA.tex);
+    setI1(pUpd, "uState", 0);
+    setF1(pUpd, "uDt", 0.002f);
+    setF1(pUpd, "uFrame", 17.0f);
+    drawFullscreen();
+
+    const double perFrameParticles = (double)PER_FRAME;
+    Timer timer;
+    int total = kWarmup + frames;
+    for (int fr = 0; fr < total; ++fr) {
+        // a) 两次全网格状态更新: 积分重力 + 球体/地面碰撞 + 阻尼
+        bindTarget(stateA);
+        glUseProgram(pUpd);
+        bindTex(0, stateB.tex);
+        setI1(pUpd, "uState", 0);
+        setF1(pUpd, "uDt", 0.008f);
+        setF1(pUpd, "uFrame", (float)fr);
+        drawFullscreen();
+        bindTarget(stateB);
+        glUseProgram(pUpd);
+        bindTex(0, stateA.tex);
+        setI1(pUpd, "uState", 0);
+        setF1(pUpd, "uDt", 0.008f);
+        setF1(pUpd, "uFrame", (float)(fr + 1));
+        drawFullscreen();
+        // b) 把状态纹理直接渲染到 1280x720 输出(读取当前帧刚写好的状态)
+        glBindFramebuffer(GL_FRAMEBUFFER, out.fbo);
+        glViewport(0, 0, 1280, 720);
+        glClearColor(0.01f, 0.01f, 0.02f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glUseProgram(pDraw);
+        bindTex(0, stateB.tex);
+        setI1(pDraw, "uState", 0);
+        setF1(pDraw, "uCount", (float)COUNT);
+        setF1(pDraw, "uPoint", 2.0f);
+        drawFullscreen();
+        timer.frame();
+        if (fr == kWarmup) {
+            timer.start();
+        }
+    }
+    float chk = 0.0f;
+    checksumTex(out.fbo, 1280, 720, &chk);
+    timer.finish(st, perFrameParticles, "Mparticle/s", 1, 1.0 / 1.0e6);
+    OH_LOG_Print(LOG_APP, LOG_INFO, 0x1234, kTag, "particle checksum %{public}f", chk);
+    destroyTarget(stateA);
+    destroyTarget(stateB);
+    destroyTarget(out);
+    endLoad();
+    return st;
+}
+
+// 7) Path Tracer: 1280x720, 1 spp/帧, 2 次反弹 + 余弦加权重要性采样, 累积到 RGBA32F
+FrameStats loadPathTracer(int frames)
+{
+    FrameStats st;
+    st.unit = "Mray/s";
+    if (!beginLoad("Path Tracer")) {
+        st.error = gpu7Error;
+        return st;
+    }
+    const int W = 1280;
+    const int H = 720;
+    const int SPP = 1;
+    const int BOUNCES = 2;
+    Target accum;
+    Target out;
+    if (!createTarget(accum, W, H, GL_RGBA32F) || !createTarget(out, W, H, GL_RGBA8)) {
+        st.error = "path tracer fbo create failed";
+        destroyTarget(accum);
+        destroyTarget(out);
+        endLoad();
+        return st;
+    }
+    GLuint pTrace = getProg(P_PT_TRACE);
+    GLuint pDraw = getProg(P_PT_DRAW);
+    if (pTrace == 0 || pDraw == 0) {
+        st.error = gpu7Error.empty() ? std::string("path tracer shader failed") : gpu7Error;
+        destroyTarget(accum);
+        destroyTarget(out);
+        endLoad();
+        return st;
+    }
+    glDisable(GL_BLEND);
+    glBindFramebuffer(GL_FRAMEBUFFER, accum.fbo);
+    glViewport(0, 0, W, H);
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    const double perFrameRays = (double)W * (double)H * (double)SPP * (double)(BOUNCES + 1);
+    Timer timer;
+    int total = kWarmup + frames;
+    for (int fr = 0; fr < total; ++fr) {
+        glBindFramebuffer(GL_FRAMEBUFFER, accum.fbo);
+        glViewport(0, 0, W, H);
+        glUseProgram(pTrace);
+        bindTex(0, accum.tex);
+        setI1(pTrace, "uAccum", 0);
+        set2F(pTrace, "uRes", (float)W, (float)H);
+        setF1(pTrace, "uFrame", (float)fr);
+        setF1(pTrace, "uSpp", (float)SPP);
+        drawFullscreen();
+
+        bindTarget(out);
+        glUseProgram(pDraw);
+        bindTex(0, accum.tex);
+        setI1(pDraw, "uAccum", 0);
+        drawFullscreen();
+        timer.frame();
+        if (fr == kWarmup) {
+            timer.start();
+        }
+    }
+    float chk = 0.0f;
+    checksumTex(out.fbo, W, H, &chk);
+    timer.finish(st, perFrameRays, "Mray/s", 1, 1.0 / 1.0e6);
+    OH_LOG_Print(LOG_APP, LOG_INFO, 0x1234, kTag, "path tracer checksum %{public}f", chk);
+    destroyTarget(accum);
+    destroyTarget(out);
+    endLoad();
+    return st;
+}

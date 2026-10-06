@@ -1,0 +1,343 @@
+// ---------------------------------------------------------------------------
+// 着色器源码 2/3: Horizon Detection / Particle Physics / Path Tracer
+// ---------------------------------------------------------------------------
+
+const char* FS_HOUGH_EDGE = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uTex;
+uniform vec2 uTexel;
+void main() {
+    vec3 tl = texture(uTex, vUV + vec2(-uTexel.x, -uTexel.y)).rgb;
+    vec3 tt = texture(uTex, vUV + vec2(0.0, -uTexel.y)).rgb;
+    vec3 tr = texture(uTex, vUV + vec2(uTexel.x, -uTexel.y)).rgb;
+    vec3 ml = texture(uTex, vUV + vec2(-uTexel.x, 0.0)).rgb;
+    vec3 mr = texture(uTex, vUV + vec2(uTexel.x, 0.0)).rgb;
+    vec3 bl = texture(uTex, vUV + vec2(-uTexel.x, uTexel.y)).rgb;
+    vec3 bb = texture(uTex, vUV + vec2(0.0, uTexel.y)).rgb;
+    vec3 br = texture(uTex, vUV + vec2(uTexel.x, uTexel.y)).rgb;
+    vec3 l = tl + 2.0 * ml + bl;
+    vec3 r = tr + 2.0 * mr + br;
+    vec3 t = tl + 2.0 * tt + tr;
+    vec3 b = bl + 2.0 * bb + br;
+    vec3 gx = (r - l) * 0.25;
+    vec3 gy = (b - t) * 0.25;
+    float mag = length(gx) + length(gy);
+    float ang = atan(gy.r, gx.r);
+    float e = smoothstep(0.35, 0.95, mag);
+    fragColor = vec4(e, ang, mag, 1.0);
+}
+)GLSL";
+
+// 每个点投一个角度: (x, y) 位置就是 (角度, rho) 的投票目标
+const char* FS_HOUGH_VOTE_A = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uEdges;
+uniform float uScale;
+uniform float uAngleScale;
+float hash1(float n) {
+    return fract(sin(n * 12.9898) * 43758.5453);
+}
+void main() {
+    float fi = float(gl_VertexID);
+    float u = hash1(fi + 1.5);
+    float v = hash1(fi * 1.37 + 7.1);
+    float w = hash1(fi * 2.71 + 3.3);
+    vec4 e = texture(uEdges, vec2(u, v));
+    float ang = w * 3.1415926;
+    float rho = (u * cos(ang) + v * sin(ang)) * 0.5 + 0.5;
+    float target = floor(rho * uScale);
+    float a = floor(ang * uAngleScale);
+    float ci = floor(vUV.x * 1024.0);
+    float ri = floor(vUV.y * 1024.0);
+    float hit = 0.0;
+    if (abs(ci - a) < 0.5 && abs(ri - target) < 0.5) {
+        hit = e.r;
+    }
+    fragColor = vec4(hit * e.g * 0.1, hit, e.r * 0.5, 1.0);
+}
+)GLSL";
+
+// 每个点覆盖全部 180 个角度(片元内循环)
+const char* FS_HOUGH_VOTE_B = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uEdges;
+uniform float uScale;
+uniform float uFrame;
+float hash1(float n) {
+    return fract(sin(n * 12.9898 + uFrame) * 43758.5453);
+}
+void main() {
+    float fi = float(gl_VertexID);
+    float u = hash1(fi + 1.5);
+    float v = hash1(fi * 1.37 + 7.1);
+    vec4 e = texture(uEdges, vec2(u, v));
+    float ci = floor(vUV.x * 1024.0);
+    float ri = floor(vUV.y * 1024.0);
+    float vote = 0.0;
+    if (e.r > 0.35) {
+        for (int i = 0; i < 180; i++) {
+            float ang = (float(i) + 0.5) * 0.017453292;
+            float rho = (u * cos(ang) + v * sin(ang)) * 0.5 + 0.5;
+            float target = floor(rho * uScale);
+            if (abs(ci - float(i)) < 0.5 && abs(ri - target) < 0.5) {
+                vote += e.g * 0.05;
+            }
+        }
+    }
+    fragColor = vec4(vote, vote * 0.5, e.r * 0.25, 1.0);
+}
+)GLSL";
+
+const char* FS_HOUGH_DRAW = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uAcc;
+uniform float uFrame;
+void main() {
+    float ci = floor(vUV.x * 1024.0);
+    float cxo = mod(ci, 90.0);
+    float cyo = floor(ci / 90.0);
+    float ri = floor(vUV.y * 1024.0);
+    float aim = cyo - mod(ri, 6.0);
+    vec2 c = (vec2(cxo, cyo) + 0.5) / vec2(512.0, 1024.0);
+    float v = texture(uAcc, c).r;
+    float s = sin((cxo * 12.9898 + cyo * 78.233 + ri * 0.017 + uFrame * 0.05)) * 43758.5453;
+    s = fract(s);
+    v *= 0.65 + 0.35 * s;
+    if (abs(aim) > 0.5) {
+        v *= 0.2;
+    }
+    v = min(v * 0.02, 1.0);
+    fragColor = vec4(v, v * 0.6, v * 0.25, 1.0);
+}
+)GLSL";
+
+// ---------------- Particle Physics ----------------
+
+const char* FS_PART_UPDATE = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uState;
+uniform float uDt;
+uniform float uFrame;
+void main() {
+    vec4 s = texture(uState, vUV);
+    vec3 p = s.xyz;
+    vec3 v = s.w * vec3(1.0, 0.0, 0.0);
+    v = s.www;
+    vec3 g = vec3(0.0, -9.81, 0.0);
+    v += g * uDt;
+    vec3 np = p + v * uDt;
+    vec3 dir = np - vec3(0.0, 0.0, 0.0);
+    float len = length(dir);
+    if (len < 0.55) {
+        vec3 n = dir / max(len, 0.0001);
+        np = n * 0.55;
+        float vn = dot(v, n);
+        v = (v - n * vn) * 0.72 - n * vn * 0.35;
+    }
+    if (np.y < -1.6) {
+        np.y = -1.6;
+        v.y = abs(v.y) * 0.55;
+        v.xz *= 0.92;
+    }
+    vec3 half3v = vec3(1.7, 1.2, 1.7);
+    if (np.x > half3v.x) {
+        np.x = -half3v.x;
+    }
+    if (np.x < -half3v.x) {
+        np.x = half3v.x;
+    }
+    if (np.z > half3v.z) {
+        np.z = -half3v.z;
+    }
+    if (np.z < -half3v.z) {
+        np.z = half3v.z;
+    }
+    v *= (0.9995 - 0.0004 * sin(uFrame * 0.01));
+    fragColor = vec4(np, max(length(v), 0.0));
+}
+)GLSL";
+
+const char* FS_PART_DRAW = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uState;
+uniform float uCount;
+uniform float uFrame;
+void main() {
+    float fi = mod(float(gl_VertexID), uCount);
+    float j = mod(fi, 1024.0);
+    float i = floor(fi / 1024.0);
+    vec2 uv = (vec2(j, i) + 0.5) / 1024.0;
+    vec4 s = texelFetch(uState, ivec2(int(j), int(i)), 0);
+    vec3 p = s.xyz;
+    float life = clamp(s.w * 0.2, 0.0, 1.0);
+    fragColor = vec4(0.25 + 0.75 * life, 0.35 + 0.5 * (1.0 - life), 0.95, 1.0);
+}
+)GLSL";
+
+const char* VS_PART_DRAW = R"GLSL(#version 300 es
+layout(location = 0) in vec2 aPos;
+uniform sampler2D uState;
+uniform float uCount;
+uniform float uPoint;
+out vec2 vUV;
+void main() {
+    float fi = mod(float(gl_VertexID), uCount);
+    float j = mod(fi, 1024.0);
+    float i = floor(fi / 1024.0);
+    vec4 s = texelFetch(uState, ivec2(int(j), int(i)), 0);
+    vec3 p = s.xyz;
+    gl_PointSize = uPoint;
+    gl_Position = vec4(p.x * 0.32, p.y * 0.34 - 0.1, p.z * 0.22, 1.0);
+    vUV = vec2(0.5 + p.x * 0.4, 0.5 + p.y * 0.4);
+}
+)GLSL";
+
+// ---------------- Path Tracer (1280x720, 2 bounces, cosine weighted) ----------------
+
+const char* FS_PT_TRACE = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uAccum;
+uniform vec2 uRes;
+uniform float uFrame;
+uniform float uSpp;
+float hash1(float x) {
+    return fract(sin(x * 12.9898) * 43758.5453);
+}
+vec3 hash3(float x) {
+    return vec3(hash1(x), hash1(x + 17.31), hash1(x + 41.77));
+}
+vec3 sky(vec3 d) {
+    float t = clamp(d.y * 0.5 + 0.5, 0.0, 1.0);
+    vec3 c = mix(vec3(0.25, 0.30, 0.40), vec3(0.55, 0.70, 0.95), t);
+    float s = max(dot(d, normalize(vec3(0.55, 0.75, 0.35))), 0.0);
+    c += vec3(1.0, 0.9, 0.7) * pow(s, 64.0) * 1.5;
+    return c;
+}
+void hitScene(vec3 ro, vec3 rd, out float t, out vec3 n, out vec3 albedo, out vec3 emit) {
+    t = 1.0e9;
+    n = vec3(0.0, 1.0, 0.0);
+    albedo = vec3(0.75);
+    emit = vec3(0.0);
+    if (rd.y < -0.0001) {
+        float tp = -ro.y / rd.y;
+        if (tp > 0.001 && tp < t) {
+            t = tp;
+            n = vec3(0.0, 1.0, 0.0);
+            vec2 uv = (ro.xz + rd.xz * tp) * 0.5 + 0.5;
+            float chk = mod(floor(uv.x * 8.0) + floor(uv.y * 8.0), 2.0);
+            albedo = mix(vec3(0.22, 0.24, 0.28), vec3(0.80, 0.78, 0.72), chk);
+        }
+    }
+    for (int i = 0; i < 6; i++) {
+        float fi = float(i);
+        vec3 c = vec3(sin(fi * 2.1 + 0.7) * 2.4, 1.7 + mod(fi, 2.0) * 1.3, cos(fi * 1.7 + 1.3) * 2.4);
+        float r = 0.6 + mod(fi, 3.0) * 0.35;
+        vec3 oc = ro - c;
+        float b = dot(oc, rd);
+        float cc = dot(oc, oc) - r * r;
+        float disc = b * b - cc;
+        if (disc > 0.0) {
+            float sq = sqrt(disc);
+            float t0 = -b - sq;
+            float tt = t0;
+            if (tt < 0.002) {
+                tt = -b + sq;
+            }
+            if (tt > 0.002 && tt < t) {
+                t = tt;
+                n = normalize(ro + rd * tt - c);
+                float fl = mod(fi, 4.0);
+                if (fl < 1.0) {
+                    albedo = vec3(0.90, 0.30, 0.25);
+                } else if (fl < 2.0) {
+                    albedo = vec3(0.30, 0.80, 0.40);
+                } else if (fl < 3.0) {
+                    albedo = vec3(0.30, 0.50, 0.95);
+                } else {
+                    albedo = vec3(0.95, 0.85, 0.35);
+                    emit = vec3(3.5, 3.2, 2.6);
+                }
+            }
+        }
+    }
+}
+void main() {
+    vec4 prev = texture(uAccum, vUV);
+    vec3 col = prev.rgb;
+    float w = prev.a;
+    float base = uFrame * 4096.0 + gl_FragCoord.x * 7.13 + gl_FragCoord.y * 3.71;
+    for (int s = 0; s < 4; s++) {
+        if (float(s) >= uSpp) {
+            continue;
+        }
+        vec3 rnd = hash3(base + float(s) * 131.7);
+        vec2 sp = gl_FragCoord.xy + rnd.xy;
+        vec2 uv = (sp - uRes * 0.5) / max(uRes.y, 1.0);
+        float fov = 1.35;
+        vec3 ro = vec3(0.0, 2.4, 6.0);
+        vec3 ta = vec3(0.0, 1.0, 0.0);
+        vec3 fw = normalize(ta - ro);
+        vec3 rt = normalize(cross(vec3(0.0, 1.0, 0.0), fw));
+        vec3 up = cross(fw, rt);
+        vec3 rd = normalize(uv.x * fov * rt + uv.y * fov * up + fw);
+        vec3 tp = vec3(1.0);
+        vec3 acc = vec3(0.0);
+        for (int b = 0; b < 3; b++) {
+            float t = 0.0;
+            vec3 n = vec3(0.0);
+            vec3 albedo = vec3(0.0);
+            vec3 emit = vec3(0.0);
+            hitScene(ro, rd, t, n, albedo, emit);
+            if (t > 1.0e8) {
+                acc += tp * sky(rd);
+                break;
+            }
+            acc += tp * emit;
+            vec3 p = ro + rd * t;
+            vec3 nl = (dot(n, rd) < 0.0) ? n : -n;
+            float r1 = hash1(base + float(s) * 7.7 + float(b) * 31.3);
+            float r2 = hash1(base + float(s) * 3.3 + float(b) * 19.1);
+            float rr = sqrt(r1);
+            float ph = 6.2831853 * r2;
+            vec3 dir = nl * sqrt(max(1.0 - r1, 0.0)) + normalize(cross(nl, vec3(0.0, 1.0, 0.0)) + vec3(0.001)) * (rr * cos(ph)) + cross(nl, normalize(cross(nl, vec3(0.0, 1.0, 0.0)) + vec3(0.001))) * (rr * sin(ph));
+            rd = normalize(dir);
+            ro = p + nl * 0.002;
+            tp *= albedo * 0.92;
+            if (b == 1) {
+                break;
+            }
+        }
+        col += tp;
+        w += 1.0;
+    }
+    float inv = 1.0 / max(w, 1.0);
+    fragColor = vec4(col * inv, w);
+}
+)GLSL";
+
+const char* FS_PT_DRAW = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uAccum;
+void main() {
+    vec3 c = texture(uAccum, vUV).rgb;
+    c = c / (c + vec3(1.0));
+    c = pow(c, vec3(0.4545));
+    fragColor = vec4(c, 1.0);
+}
+)GLSL";

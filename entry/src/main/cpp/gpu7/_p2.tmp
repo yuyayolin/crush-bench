@@ -1,0 +1,18 @@
+// 追加: 需要逐点写入的 pass 使用"_点_顶点着色器"(gl_VertexID -> 坐标)
+const char* kPointVS = R"GLSL(#version 300 es
+layout(location = 0) in vec2 aPos;
+out vec2 vUV;
+void main() {
+    float fi = float(gl_VertexID);
+    float x = (aPos.x + 1.0) * 0.5;
+    float y = (aPos.y + 1.0) * 0.5;
+    vUV = vec2(x, y);
+    gl_PointSize = 1.0;
+    gl_Position = vec4(aPos, 0.0, 1.0);
+}
+)GLSL";
+
+GLuint makeProgram2(const char* vsSrc, const char* fsSrc, std::string* err)
+{
+    return makeProgram(vsSrc, fsSrc, err);
+}

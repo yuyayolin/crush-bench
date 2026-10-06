@@ -1,0 +1,113 @@
+====================================================================================================
+[A] 接口与输出形状(逐项对照表 / 分数比 / 取得条件)
+====================================================================================================
+  [PASS] A1 头文件里声明了 auroraReferenceCompareReports(jsonA, jsonB, optionsJson) -- reference_compare.h
+  [PASS] A2 napi 里注册了 compareReports, 并且读 3 个参数(第三个可选) -- reference_napi.cpp: compareReports(jsonA, jsonB, options?)
+  [PASS] A3 分数比的定义写在输出里(设备B / 设备A), 不留歧义 -- ratioDefinition
+  [PASS] A4 逐项对照表每项都带 section/name/a/b/ratio/normalized/truth -- items[]
+  [PASS] A5 两边的取得条件都在: 可用核数 / 可用最高频档 / 线程数 / 实际用到核数 / 运行时频率中位 -- conditions{...}
+  [PASS] A6 该项是否计分也逐项给出(scoredByPolicy + scoredNote + 一句解释) -- scoredMeaning + 每项 scoredByPolicy
+  [PASS] A7 运行时频率中位是从报告里的 runFreq 文本解析出来的(不是自己猜一个) -- parseRuntimeKhzMedian(runFreq)
+  [PASS] A8 逐项匹配用 section + name(同名不同节的项不会被错配) -- findItem(section, name) + canonSection 认 GB7 / GB8 / CS1 三种历史写法
+  [PASS] A9 只在一侧出现的项也照实列出(不静默丢掉) -- itemsOnlyInA / itemsOnlyInB
+  [PASS] A10 对比表带 QoS / cpuset 证据(items[] 的两个旁路键 + 机器级全文 + 按字符边界摘录) -- items[].qos / items[].cpuset -> environmentEvidence
+
+[B] 原始分数比 vs 归一化比(消掉 12.5% 核数虚高与 13.5% 频率假提升)
+====================================================================================================
+  [PASS] B1 三个归一化量都在输出里(每核 / 同频 / 两个一起) -- normalized{perCoreRatio, sameFreqRatio, perCoreSameFreqRatio}
+  [PASS] B2 每核比的公式与独立模型一致: (B 吞吐/B 核数) / (A 吞吐/A 核数) -- model_per_core() 对应
+  [PASS] B3 同频比的公式与独立模型一致: (吞吐/运行时频率中位 x 标称最高频) 两侧相除 -- model_same_freq() 对应
+  [PASS] B4 两个已知污染源写清楚了(12.5% 核数虚高 / 13.5% 频率假提升) -- knownInflationSources
+  [PASS] B5 归一化的前提也标注('吞吐 ∝ 频率' 跨架构是假设) -- normalizationDefinition.precondition
+  [PASS] B6 明确写了不写 /sys 锁频锁核(那是改被测对象, 只做事后归一化) -- normalizationDefinition.notDone
+  [PASS] B7 实测到的核数比 / 频率档比被单独列出来(用户能看到污染源有多大) -- conditions.observedDifferences
+  [PASS] B8 复合分的归一化按几何平均合成(与官方'复合分 = 各项几何平均'同口径) -- composites.normalized
+  [PASS] B9 缺输入时不硬算: 任何一侧缺核数 / 缺频率 / 缺吞吐都返回 null 并说明缺什么 -- normalized.why
+
+[C] 与参考真值对照: 偏差百分比 + 线性判定(阈值 5%, 且标明是我们自己定的)
+====================================================================================================
+  [PASS] C1 偏差公式与独立模型一致: (实测比 / 真值比 - 1) x 100% -- model_deviation() 对应
+  [PASS] C2 单侧偏差公式: (本机 / 参考值 - 1) x 100% -- model_truth_delta() 对应
+  [PASS] C3 阈值 5% 出现在判定里, 且每一处都标明是我们自己定的 -- within5Percent / linearWithin5Percent + thresholdIsOursNotOfficial
+  [PASS] C4 只有两端都有真值时才算比值偏差(单端真值只给各自的 deltaPercent) -- truth.why
+  [PASS] C5 真值来源写在每一项里(sourceKind + source 全文) -- truth.sourceKindA/sourceA
+  [PASS] C6 991 的一手证据口径被沿用(对照表也说 991 的来源是用户拍屏) -- truthRule
+  [PASS] C7 本工程根本不跑的量(GB6 单核 / 3DMark GPU 累计)写 null + 缺什么 -- truthAnchors.rows[].why
+  [PASS] C8 判不出来机型时写'判不出来', 不瞎猜 -- detectSoc(): 显式指定 > 文本命中 > 机型名推断(标注为推断)
+
+[D] 缺什么写什么(不许编数)
+====================================================================================================
+  [PASS] D1 不是本工程的报告 -> 直接拒绝, 不硬解析 -- schema 标记 "aurora-fullreport"
+  [PASS] D2 空报告 / 缺 items / 缺 header / 格式不符 都有对应的人话说明 -- parseProblem[]
+  [PASS] D3 缺什么会汇总进 inputs.missing, 且写明规则 -- inputs.missing + missingRule
+  [PASS] D4 报告被中断 / 版本不同 -> 明确列为不可比 -- notComparable[]
+  [PASS] D5 比对不成立时 ok=false(调用方一眼能看出来) -- ok 字段
+
+[E] 纯计算 / 只读(不跑负载 / 不连设备 / 不读 /sys / 不写文件)
+====================================================================================================
+  [PASS] E1 compareReports 的实现里没有任何'写文件 / 起进程 / 连设备 / 跑负载 / 起线程'的调用 -- 0 处命中
+  [PASS] E2 模块自述就是'纯计算 / 只读' -- module 字段
+  [PASS] E3 libauroraref 仍然独立(只链 napi + hilog), 不给主模块加依赖 -- CMakeLists.txt
+  [PASS] E4 报告里也给用户写了'怎么用'(四步) -- verdicts.howToUse
+
+[F] 真值表版本与 991 标注(与任务一的一致性)
+====================================================================================================
+  [PASS] F1 真值表版本已 +1(改动真值表必须 +1, 旧结论届时不可比) -- kReferenceVersion = 2
+  [PASS] F2 991 的 sourceKind 是一手证据类, 且不再写成'未证实' -- kSnlTruth[0]
+  [PASS] F3 note 里写全了 机型/测试项/总分/平均帧率/来源, 并保留了原来的 caveat -- kSnlTruth[0].source
+  [PASS] F4 9020=454 与 9000S=303 的标注一个字都没动 -- 两条原样保留
+
+[G] 数值模型交叉核对(独立 Python 模型 vs C++ 公式) + 消污染算例
+====================================================================================================
+  [PASS] G1 算例①: 原始总吞吐比被核数差污染成 1.1250(9 核 vs 8 核 = 虚高 12.5%) -- raw = 1.1250(真实每核性能比是 1.0000)
+  [PASS] G2 算例①: 每核归一化后精确恢复 1.0000 -- perCore = 1.0000
+  [PASS] G3 算例②: 原始比因频率档差凭空多出 13.5%(1.1350x) -- raw = 1.1350(真实性能相同)
+  [PASS] G4 算例②: 同频归一化后精确恢复 1.0000 -- sameFreq = 1.0000
+  [PASS] G5 算例③: 核数与频率同时不同时两个一起消 -> 每核同频比 = 1.0000 -- raw = 1.0089 -> perCoreSameFreq = 1.0000
+  [PASS] G6 模型里的 4 条公式在 C++ 里逐字能找到(公式没有走样) -- 模型: (metric_b / cores_b) / (metric_a / cores_a) | (metric_b / khz_med_b * top_b) / (metric_a / khz_med_a * top_a) | (measured_ratio / truth_ratio - 1.0) * 100.0 | (ours / reference - 1.0) * 100.0
+  [PASS] G7 阈值口径一致: 模型判定与 C++ 判定都是 |偏差| <= 5% -- 3% -> 通过 / 7% -> 不通过
+
+[H] 用户真正要的那个数: 「本次两台的分数比 → 芯片性能比是多少」(2026-10-08 新增)
+====================================================================================================
+  [PASS] H1 输出里有独立的 chipPerformanceRatio 块(不是只有分散的归一化字段) -- compareReports -> chipPerformanceRatio
+  [PASS] H2 块里同时给出: 原始分数比 / 核数比 / 频率档比 / 三个归一化 GM -- contamination + normalized(三个 GM 都在)
+  [PASS] H3 明确写出结论取哪一个(两个污染源一起消的优先, 逐级降级并写明用的是哪一个) -- best > both > perCore > null(不拿分数比冒充芯片性能比)
+  [PASS] H4 给出人话结论 conclusion, 且里面必须同时出现'分数比'与'芯片多核性能比最接近的估计' -- conclusion: 数字 + 每一层归一化做了什么 + 前提
+  [PASS] H5 算不出来时写 null(不拿分数比冒充) + 前提与 caveat 都在 -- caveats + conclusion 的兜底分支
+  [PASS] H6 单核分数比也一并给出(单核不含核数污染, 可直接当芯片单核性能比读) -- 单核与多核两个口径都报, 并写明各自能怎么用
+  [PASS] H7 模型复算: 核数与频率档同时不同 -> 两个一起消精确恢复 1.0000(与 C++ 同口径) -- perCoreSameFreq = 1.000000(与上面 G5 同源)
+
+[I] 任务一/二/三的三条硬要求(2026-10-08 新增)
+====================================================================================================
+  [PASS] I1 输出里有独立的 selfCheckAudit 块(两边各自的随芯片变化自检清单) -- selfCheckAudit{a,b,conclusion} —— 自检清单只标注'不可用于跨芯片比较', 不改变参与项集合
+  [PASS] I2 每一项排除都带项名 + 排除原因(判定依据原文) + 判定口径, 不是只给一个数字 -- selfCheckAudit.a/b.excluded[]
+  [PASS] I3 直接给出『两边自检清单是否一致』的结论(一致/不一致/判不出来 三态), 且明说它不改参与项集合 -- excludedSetsIdentical + conclusion(2026-10-05 起: 自检清单只作提示)
+  [PASS] I4 参与项集合逐阶段对照, 且明写『参与项不同 -> 复合分原始比不可用』 -- compositeParticipants.single/multi
+  [PASS] I5 参与项不同时, 额外给出『只用两边共同参与项』重算的比(不是悄悄相除, 而是换一套同项口径) -- sameItemSetComparison
+  [PASS] I6 原始多核复合分比带可用性标记与原因(不可用时不许被当成芯片比) -- rawMultiCompositeRatioUsable
+  [PASS] I7 逐项频率证据齐全: runFreq 原文 + 拿不到的原因 + 最高频档的来源 -- items[].a/b.conditions{...}
+  [PASS] I8 两台各自的运行时频率中位与可用最高频档都在输出里(逐项统计 + 报告原话两条证据) -- conditions.a/b.runtimeKhzMedianOfItems + machineLevelFromReport
+  [PASS] I9 同频归一化公式仍是『吞吐 / 运行时频率中位 x 标称最高频』两侧相除(没被改写) -- model_same_freq() 对应
+  [PASS] I10 条件差逐项给出(线程数比 / SMT 状态 / 可用核集合 / 物理逻辑核) + 影响方向 -- conditionGaps
+  [PASS] I11 没拿到同条件数据时明确写『不同/判不出来』, 不写同条件 -- sameRunConditions=false/null
+  [PASS] I12 每核比的前提写清楚了(核数取线程数; SMT 开的一侧两个线程 != 两个核) -- perCorePrecondition
+  [PASS] I13 核数取值有硬判据: workersBound 超过可用核集合时不算核数(真机上 72/84 是线程池大小) -- coresUsedSource
+  [PASS] I14 交叉核对模式自己就把三条打全: 排除集对照 / 参与项同项性 / 频率证据 / 条件差 / 最终结论 -- cross_check() 的 [1]~[6]
+  [PASS] I15 交叉核对模式在参与项不同时明确拒绝把复合分原始比当结论 -- cross_check() [2]
+  [PASS] I16 交叉核对模式的 GM 与 native 同口径(只统计 GB7 单核/多核两节) -- cross_check() [6]
+
+[J] 双重归一化 bug 的回归断言(2026-10 新增): 口径与设备侧一致, 且旧写法不许再出现
+====================================================================================================
+  [PASS] J1 旧的『两个比值相乘』写法在本脚本里已经一处都不剩 -- 旧写法: perCoreRatio x sameFreqRatio(会把 metric 用两次)
+  [PASS] J2 新口径函数 model_per_core_same_freq 已定义, 且在 [2]/[4]/[6] 都被使用 -- 两个归一化作用在同一份吞吐上
+  [PASS] J3 设备侧仍是『两个归一化作用在同一份吞吐上』(不是两个比值相乘) -- reference_compare.cpp: safeRatio((metric / khzMed * khzTop) / coresUsed, ...)
+  [PASS] J4 代数量化: 旧口径 = 新口径 x 两台原始吞吐比(metricB/metricA) —— 这就是被多乘的因子 -- 新 0.708915 · 旧 0.567132 · 旧/新 0.800000 = metricB/metricA 0.800000
+  [PASS] J5 真机记录自洽: 旧 0.6987 / 正确 0.7889 = 0.8857 = 两台原始吞吐比 GM(与 J4 同一条代数关系) -- 0.6987 / 0.7889 = 0.8857(旧口径低报 11.4%)
+   说明: 两份原始真机报告 JSON 不在本仓库里(自检器只做静态核对); 拿到报告后跑
+         python verify_report_compare.py --reports A.json B.json
+         即可用修正后的口径复算, [6] 里的『每核x同频』应当与设备侧
+         perCoreSameFreqRatioGM 逐位一致(本次两份报告的正确值是 0.7889)。
+
+====================================================================================================
+共 75 项断言, 失败 0 项 -> PASS
+====================================================================================================

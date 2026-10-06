@@ -1,0 +1,6 @@
+{
+  "name": "libauroraref.so",
+  "types": "./index.d.ts",
+  "version": "0.2.0",
+  "description": "AuroraBench reference comparison module (read-only truth table + two-report comparison)"
+}

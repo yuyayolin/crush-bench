@@ -1,0 +1,92 @@
+==============================================================================
+GPU-SNL 结果 JSON: 括号不平衡根因 / 修复 / 自检误报判别(离线)
+==============================================================================
+
+[A] 夹具自证(真机原样字节)
+  [PASS] A1 夹具文件存在 -- D:\新建文件夹\aurora-bench\entry\src\main\cpp\sn_json_fixture_device_r80.py
+  [PASS] A2 夹具字节数 == 30372 -- 实测 30372
+  [PASS] A3 SHA256 与登记值一致 -- dc0958ad3286faac74d18dde...
+  [PASS] A4 environment.stability.state 的野字节在 11267 处 -- b'\xd0\x9d\xc2\xb1s\x7f'
+  [PASS] A5 4 个 CESU-8 孤立低位代理在 11326 处 -- U+DDAC/U+DC69/U+DECE/U+DCBD
+  [PASS] A6 roundsDetail[].envState 的野字节在 21281 处 -- b'\xd0\xa0\xc2\xb1s\x7f'
+      来源: D:\gb7logs\r80\report-latest.txt 第 1091 行(设备 HUAWEI Pura X Max (HOP-AL00, OpenHarmony-7.0.0.105, API 26))
+
+[B] 修前: 真机这一段 JSON 到底能不能解析
+  [PASS] B1 修前 json.loads() 失败(证明 JSON 真的坏了) -- JSONDecodeError: Expecting ',' delimiter: line 1 column 8553 (char 8552)
+  [PASS] B2 括号计数扫描: 字符串未闭合(野字节把字符串吃掉了) -- depth=3 inStr=True
+      未配对的开启符号 3 个: {@0(?), {@7646(environment), {@8471(stability)
+  [PASS] B3 未配对开启符号 == 3(根 / environment / stability) -- 3 个
+
+[C] 只修上一轮那一处(environment 野指针) -> 剩下的就是这个 bug
+      未配对的开启符号 2 个: {@0(?), {@19473(ruler)
+  [PASS] C1 字符串已闭合(野指针那处确实修好了) -- inStr=False
+  [PASS] C2 括号计数 depth == 2  <-- 与真机 8.1 报告『括号不平衡(depth=2)』逐字吻合 -- depth=2
+  [PASS] C3 两个未配对开启符号就是 ruler 与根对象 -- {@0(?),{@19473(ruler)
+  [PASS] C4 这一份仍然解析失败(所以 8.1 只是把失败换了个说法, 并没有变好) -- JSONDecodeError: Expecting ',' delimiter: line 1 column 22451 (char 22450)
+
+[D] 修满(本次补上 ruler / gpu 两个 '}') -> 严格解析必须通过
+  [PASS] D1 未配对开启符号 == 0
+  [PASS] D2 括号计数 depth == 0 且字符串全闭合 -- depth=0 inStr=False
+  [PASS] D3 json.loads() 成功 -- 已解析
+  [PASS] D4 顶层键与夹具登记的一致(39 个) -- 实测 39 个
+  [PASS] D5 ruler 里是 cpu / simd / headroomNotes(ArkTS 读的就是 ruler.cpu / ruler.simd) -- cpu,headroomNotes,simd,whatThisDoesNotMeasure,whatThisMeasures
+  [PASS] D6 gpu 是顶层键, config / validity / warnings / elapsedMs 回到顶层(不再被塞进 gpu) -- gpu 子键: glRenderer,glVendor,glVersion,glslVersion,maxDrawBuffers,maxSamples,mrtUsed,msaa,note,offScreen,vsync
+  [PASS] D7 ok/scored/gb7Item 口径没被动过 -- ok=True scored=False gb7Item=False
+      顶层键(39): benchVersion, benchVersionText, benchmarkVersion, calibration, comparability, config, cpuGpuScaling, crossGeneration, elapsedMs, environment, format, fps, gb7Item, gpu, gpuBoundEvidence, isolation, kind, linearity, notes, ok, realUse, realUseShort, reference, referenceComparison, rendering, repeatability, risks, ruler, scale, score, scoreContributes, scored, section, selfProof, throughput, validity, warnings, work, workload
+
+  [PASS] D8 sn_json_sample.json 可解析(镜面样例没被带坏) -- 37 键
+  [PASS] D9 镜面样例的顶层键全部出现在真机 payload 里 -- 一致
+  [PASS] D10 镜面样例的 ruler 同样是 {cpu, simd} -- cpu,simd
+
+[E] 自检误报反例: 正常文本里的 花括号/方括号/引号/反斜杠 不许被当成结构括号
+  [PASS] E1 反例本身都是合法 JSON(用严格解析器确认过) -- 10 条
+  [PASS] E2 修好的计数扫描(跳字符串+转义)对 10 条反例全部 depth=0 不误报 -- 10 条
+  [PASS] E3 『不跳字符串』的旧式计数会在其中 2 条上误报 —— 这正是自检误报的成因 -- 2/10 条
+  [PASS] E4 9 条真坏的样本全部被严格解析器拒绝(含括号类与文法类) -- 被拒绝 9 条
+  [PASS] E5 括号类样本在计数扫描上也确实不平衡(旁证一致, 但判决权仍在解析器) -- 少一个 '}' depth=1; 少一个 ']' depth=1; 多一个 '}' depth=-1
+  [PASS] E6 文法类样本的括号是平衡的 —— 只靠数括号根本发现不了它们 -- 6 条
+
+[F] 源码级断言(钉住这次的两处漏括号, 防回归)
+  [PASS] F1 snlBuildJson 的 JSON 模板括号平衡(depth=0, 无未闭合字符串) -- depth=0 inStr=False 模板 8295 字符
+  [PASS] F1 envJson 的 JSON 模板括号平衡(depth=0, 无未闭合字符串) -- depth=0 inStr=False 模板 1102 字符
+  [PASS] F1 repeatabilityJson 的 JSON 模板括号平衡(depth=0, 无未闭合字符串) -- depth=0 inStr=False 模板 812 字符
+  [PASS] F1 referenceComparisonJson 的 JSON 模板括号平衡(depth=0, 无未闭合字符串) -- depth=0 inStr=False 模板 1846 字符
+  [PASS] F1 linearityJson 的 JSON 模板括号平衡(depth=0, 无未闭合字符串) -- depth=0 inStr=False 模板 869 字符
+  [PASS] F1 comparabilityJson 的 JSON 代表路径(if 第一分支)模板括号平衡(depth=0, 无未闭合字符串) -- depth=0 inStr=False 模板 1294 字符
+  [PASS] F1b comparabilityJson 的分支语句只收口不开口(delta<=0, 无未闭合字符串) -- 全部合规
+  [PASS] F2 snlBuildJson 模板没有任何未配对的 花括号/方括号
+  [PASS] F3 ruler 的 '}' 出现在 headroomNotes 之后、rendering 之前 -- 'SION_BOUND / 分数无效"]}'
+  [PASS] F4 gpu 的 '}' 出现在 gpu.note 之后、config 之前 -- '驱动, 只作记录, 不计分或负载选择"}'
+  [PASS] F5 模板里的 key 序列里 ruler 紧跟 notes/risks, config 紧跟 gpu(结构没被搬走)
+  [PASS] F6 没有任何 const char*/运行时字符串绕过 jsonSafe 进 JSON 字符串值 -- 全部经过 jsonSafe/snCanonState, 或只产出 true/false/null
+  [PASS] F7 environment.stability.state 走了 jsonSafe + snCanonState
+  [PASS] F8 roundsDetail 的 envState 走了 jsonSafe + snCanonState
+  [PASS] F9 gpuBoundEvidence.verdict / credibility.verdict 走了 jsonSafe
+  [PASS] F10 snprintf 里成段的 JSON 模板(%s 占位符形式)也都括号平衡 -- roundsDetail / perCore 等片段全部平衡(共 0 处)
+
+[G] 自检实现本身的硬要求
+  [PASS] G1 计数扫描跳过字符串与转义(源码里有 inStr / esc 两条分支) -- SnBraceScan
+  [PASS] G2 判决权在真解析器手里(不是计数器) -- SnJsonParser::parseTop()
+  [PASS] G3 解析器拒绝时写『JSON 确实坏了』并带字节偏移
+  [PASS] G4 解析器通过而计数器不通过时写『自检误报(不是 JSON 坏了)』
+  [PASS] G5 误报不会阻断交付(交付只看 chk.ok)
+  [PASS] G6 旧签名 snJsonSelfCheck(s, &why) 已不存在(避免两套判据并存)
+  [PASS] G7 解析器覆盖对象/数组/字符串/数字/字面量五种文法
+
+[H] 诚实边界(打印, 不假装)
+      * 真机 8.1 那份 30801 字节的成功结果在日志里取不到:
+        phone81/report-latest.txt 第 1166 行的『原始 JSON=』写的是
+        {"ok":false,"error":"... 括号不平衡(depth=2) ..."} —— 只有失败文本,
+        native 没把那段 30801 字节的 out 落盘(snJsonSelfCheck 失败后直接 return)。
+        本脚本因此用同一份模板在同一台真机上产出的完整 payload(30372 字节)做证据,
+        它带着同样的两个漏括号, 修好上一轮的野指针之后 depth 同样是 2。
+      * 本容器里没有能在主机上跑的 C++ 编译器(SDK 的 clang 默认目标是
+        x86_64-w64-windows-gnu, 但没装对应的 C 运行库/头文件), 所以
+        snJsonSelfCheck 的 C++ 实现本身只做了源码级断言([F][G]) +
+        同语义的 Python 镜像([B][C][D][E]); 真机复跑 GPU-SNL 小节才是最终确认。
+
+------------------------------------------------------------------------------
+检查项 52 个, FAIL 0 个
+------------------------------------------------------------------------------
+[OK] 全部通过: 根因已定位(ruler/gpu 两个漏 '}'), 修后真机 payload 能被 json.loads() 解析,
+     且自检已能区分『JSON 真的坏了』与『自检误报』。

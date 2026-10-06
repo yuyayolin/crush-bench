@@ -1,0 +1,31 @@
+----- AURORA NATIVE CRASH -----
+when   : 2026-10-12T09:41:07.318Z  epoch_ms=1791798067318
+signal : 11 SIGSEGV  si_code=1 SEGV_MAPERR(地址未映射=野指针/越界)  si_addr=0x18
+thread : pid=24817 tid=24853 (工作线程: 负载线程崩的)
+pc/lr  : pc=0x5a77adadd0 lr=0x5a7610f2c4 sp=0x7fdc01a3b0
+        (用未 strip 的 libaurorabench.so 按 pc/lr 反查符号)
+module : pc 不在 libaurorabench.so 的代码段内 => 崩在系统库/运行时/其它 .so [self_base=0x5b278c1000 text=0x5b279a4000-0x5b27d15000]
+modmap : 已记录 3 个可执行段(定长表上限 128), 没有段被丢弃(全部可执行段都已入表)  刷新次数=37 最近刷新=2026-10-12T09:41:07.201Z
+pc     : pc=0x5a77adadd0 落在 /system/lib64/libc++_shared.so +0xadadd0（该模块映射段 0x5a77000000-0x5a77b00000, 装载基址 0x5a77000000, 文件偏移 0x0; +0x… 就是 nm/addr2line 直接可用的 vaddr）
+lr     : lr=0x5a7610f2c4 落在 /system/lib64/libc.so +0x10f2c4（该模块映射段 0x5a76000000-0x5a76200000, 装载基址 0x5a76000000, 文件偏移 0x0; +0x… 就是 nm/addr2line 直接可用的 vaddr）
+        (pc 不在我们的 .so 里 ≠ 不是我们的 bug: 我们的 std::string / operator new 住在 libc++_shared.so, 堆被写坏之后最先炸的通常是 libc.so 里的 malloc/free。上面这两行 + 下一条的栈上候选才够定罪或洗清)
+itemmem: 逐项地址空间归因(旁路: 每个 item 标记点读一次 /proc/self/status, 不计分)
+         #1 phase="GB7 单核" item="File Compression" 1/16 VmSize=1390152 kB VmRSS=152432 kB VmHWM=168400 kB Threads=12 ΔVmSize=+190152 kB ΔVmRSS=+2432 kB
+         #2 phase="GB7 单核" item="Text Processing" 4/16 VmSize=1621000 kB VmRSS=452900 kB VmHWM=512000 kB Threads=13 ΔVmSize=+230848 kB ΔVmRSS=+300468 kB [本项占用异常, 见该项明细]
+         #3 phase="GB7 单核" item="Asset Compression" 6/16 VmSize=14034764 kB VmRSS=202808 kB VmHWM=451640 kB Threads=14 ΔVmSize=+12413764 kB ΔVmRSS=-250092 kB [本项占用异常, 见该项明细]
+         #4 phase="GB7 单核" item="HDR" 9/16 VmSize=14034764 kB VmRSS=202808 kB VmHWM=451640 kB Threads=14 ΔVmSize=0 kB ΔVmRSS=0 kB
+itemmem: 增量最大的一项: #3 phase="GB7 单核" item="Asset Compression" ΔVmSize=+12413764 kB ΔVmRSS=-250092 kB => 本项占用异常, 见该项明细
+itemmem: 判据(写死): 单项 ΔVmSize > 524288 kB(512 MB) 或 ΔVmRSS > 262144 kB(256 MB) => 该行标 "本项占用异常, 见该项明细"
+itemmem: 逐行明细文件: /data/app/el2/100/base/com.aurora.bench/haps/entry/files/native_memory.txt (进程被 SIGKILL 时, 这份逐项账目是盘上唯一的地址空间归因)
+item   : phase="GB7 单核" item="HDR" index=11/16 marked=2026-10-12T09:41:06.902Z age_ms=416
+memory : VmPeak=14568144 kB VmHWM(RSS峰值)=451640 kB VmRSS=202808 kB VmSize=14034764 kB Threads=14
+at_item: rss=202804 kB hwm=451604 kB size=14034700 kB threads=14 sampled=2026-10-12T09:41:06.880Z age_ms=438  (ArkTS 调 sampleMemory() 采的, 用于判断是否逼近内存上限)
+source : crash_guard@libaurorabench.so (仅记录, 不改负载)
+stack  : 穷人的调用栈(粗扫崩溃线程栈上的 8 字节槽位, 落在已记录可执行段里的值当成候选返回地址; 只是候选, 不是精确回溯, 不依赖 .eh_frame/展开器)
+         栈上候选返回地址: /system/lib64/libc++_shared.so +0xadadd0（该模块映射段 0x5a77000000-0x5a77b00000; 槽位 sp+0x0, 值 0x5a77adadd0）
+         栈上候选返回地址: /system/lib64/libaurorabench.so +0x1b2000（该模块映射段 0x5b279a4000-0x5b27d15000; 槽位 sp+0x8, 值 0x5b279b2000）
+         栈上候选返回地址: /system/lib64/libc.so +0x10f2c4（该模块映射段 0x5a76000000-0x5a76200000; 槽位 sp+0x10, 值 0x5a7610f2c4）
+         栈上候选返回地址: /system/lib64/libc++_shared.so +0x500123（该模块映射段 0x5a77000000-0x5a77b00000; 槽位 sp+0x20, 值 0x5a77500123）
+         栈上候选返回地址: /system/lib64/libaurorabench.so +0x1a4000（该模块映射段 0x5b279a4000-0x5b27d15000; 槽位 sp+0x30, 值 0x5b279a4000）
+         共 5 个候选(只列前 12 个, 本次列出 5 个; 窗口 = sp 起 2048 字节). 对照看看: 命中 libaurorabench.so 的候选 = 我们的调用链; 命中 libc++_shared/libc 的候选 = 标准库内部(常见于堆被写坏后的 free)
+----- END AURORA NATIVE CRASH -----

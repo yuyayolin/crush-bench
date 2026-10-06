@@ -1,0 +1,6 @@
+{
+  "name": "libauroragpu7.so",
+  "types": "./index.d.ts",
+  "version": "0.1.0",
+  "description": "AuroraBench GPU workload suite (11 items, offscreen ES 3.0)"
+}

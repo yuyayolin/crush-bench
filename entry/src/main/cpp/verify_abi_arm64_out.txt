@@ -1,0 +1,46 @@
+====================================================================================================
+[A] 构建配置里的 ABI 过滤器
+====================================================================================================
+  [PASS] A1 entry/build-profile.json5 存在且可读 -- D:\新建文件夹\aurora-bench\entry\build-profile.json5
+  [PASS] A2 显式声明了 abiFilters(不是靠工具链默认值) -- "abiFilters": ["arm64-v8a"]
+  [PASS] A3 abiFilters 精确等于 ["arm64-v8a"] -- 实际 = ['arm64-v8a']
+  [PASS] A4 abiFilters 里没有任何 32 位 ABI -- 逐个: ['arm64-v8a']
+  [PASS] A5 根 build-profile.json5 里没有第二处 abiFilters(单一来源, 不会被覆盖) -- 根配置里 abiFilters 出现次数 = 0
+  [PASS] A6 CMakeLists.txt 没有写死别的架构(ANDROID_ABI / CMAKE_SYSTEM_PROCESSOR) -- 由 hvigor 按 abiFilters 传入
+
+[B] 打包产物(HAP)里实际打进去了哪些 ABI
+====================================================================================================
+  核查对象: D:\新建文件夹\aurora-bench\release\Crush-9.9-unsigned.hap (24158922 字节)
+  libs/ 下的 ABI 目录: ['arm64-v8a']
+  libs/ 下的 .so: libaurorabench.so, libauroragpu.so, libauroragpu7.so, libauroraref.so, libaurorasn.so, libc++_shared.so
+  [PASS] B1 HAP 里 libs/ 下只有 arm64-v8a 一个 ABI 目录 -- 实际 = ['arm64-v8a']
+  [PASS] B2 没有 armeabi-v7a / armeabi / x86 / x86_64 任何一个目录 -- 0 个
+  [PASS] B3 HAP 里确实有 .so(这一档不是'空着通过') -- 6 个 .so
+     · libaurorabench.so: ELF64, EM_AARCH64(183, 64 位 ARM)
+     · libauroragpu.so: ELF64, EM_AARCH64(183, 64 位 ARM)
+     · libauroragpu7.so: ELF64, EM_AARCH64(183, 64 位 ARM)
+     · libauroraref.so: ELF64, EM_AARCH64(183, 64 位 ARM)
+     · libaurorasn.so: ELF64, EM_AARCH64(183, 64 位 ARM)
+     · libc++_shared.so: ELF64, EM_AARCH64(183, 64 位 ARM)
+  [PASS] B4 HAP 里每一个 .so 都是 ELF64 + EM_AARCH64 -- 6/6 个 .so 全部 aarch64
+  [PASS] B5 HAP 里没有任何 32 位 ELF(EM_ARM=40 / EM_386=3 / ELF32) -- 逐个头字段已在上面列出
+  [PASS] B6 module.json 里没有 32 位相关声明(abiList / 32 位 deviceType) -- module.json 可读
+
+[C] 源码树里有没有预编译二进制(32 位成分的另一条来源)
+====================================================================================================
+  [PASS] C1 entry/src/main 下没有任何预编译二进制(.so / .a / .o) -- 0 个
+  [PASS] C2 native 源码全部是 C/C++ 源文件(随 abiFilters 一起编译, 不带架构属性) -- CMakeLists.txt 在 cpp/ 下
+     说明: ArkTS 侧编译产物是 .abc 字节码, 与 CPU 架构无关;
+           HAP 根目录下没有任何 lib/ 或 libs/<其它 ABI>/ 目录(B1 已核实)。
+
+[D] 配置/源码文本里的 32 位 ABI 字样
+====================================================================================================
+  [PASS] D1 entry/ 的构建配置文件里没有 32 位 ABI 字样 -- 0 处
+     说明: ref/ 与 kirin_raw/ 下的资料会提到 32/64 位, 那是外部资料, 不是构建输入, 不参与判定。
+
+====================================================================================================
+共 15 项断言, 失败 0 项, 跳过 0 档 -> PASS
+结论: 【不适用, 本工程全是 arm64】—— HAP 里只有 arm64-v8a, 每个 .so 都是 ELF64/EM_AARCH64,
+      源码树没有任何预编译二进制。官方那条『32 位应用只能跑小核、绑核也不生效』的限制
+      不适用于本工程, 因此『只有 8 个核 / 单核频率只有 70% 标称值』不能归因到 32 位。
+====================================================================================================

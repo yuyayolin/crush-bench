@@ -1,0 +1,138 @@
+============================================================================================================
+Aurora crash_guard 取证升级 · 离线断言(crash_modmap.h 真代码 + 合成输入)
+============================================================================================================
+
+D) 源码级断言(处理器里不许碰动态链接器 / 逐项归因接在既有标记点上 / 判据写死)
+  [PASS] crash_guard.cpp 使用 crash_modmap.h
+  [PASS] 模块表刷新调用纯逻辑解析函数
+  [PASS] 处理器内 pc/lr 归属走纯内存查表
+  [PASS] 处理器内栈扫描走纯内存扫描
+  [PASS] 处理器内没有 dladdr(                (dladdr 会碰动态链接器的锁)
+  [PASS] 处理器内没有 dl_iterate_phdr        (dl_iterate_phdr 会碰动态链接器的锁)
+  [PASS] 处理器内没有 open("/proc/self/maps" (处理器里重新读 maps)
+  [PASS] 处理器内没有 malloc(                (处理器里分配)
+  [PASS] 处理器内没有 snprintf(              (处理器里 snprintf)
+  [PASS] 先落主记录再扫栈(栈扫描踩空也不丢现场)
+  [PASS] 模块表在安装时读一次 maps(普通上下文)
+  [PASS] 每个标记点刷新模块表(1 秒节流)
+  [PASS] 逐项归因接在 auroraSetCurrentItem(既有 item 标记点)上
+  [PASS] auroraSetIdleMarker 会给最后一项结算
+  [PASS] 逐项采样发生在 g_seq 那段临界区之外(标记仍然原子)
+  [PASS] 判据写死 ΔVmSize > 512 MB
+  [PASS] 判据写死 ΔVmRSS > 256 MB
+  [PASS] 异常判定只有一处实现(状态机在头文件里, crash_guard 不再自己算一遍)
+  [PASS] 阶段名/负载名上限与头文件一致(static_assert 把漂移变成编译错误)
+  [PASS] 异常行文案 = 本项占用异常, 见该项明细
+  [PASS] 逐项账目落盘到 native_memory.txt
+  [PASS] 崩溃记录里整表打一遍(逐项 + 增量最大的一项)
+  [PASS] 旁路接口已声明(bench.h)
+  [PASS] 头文件自足(不 include 任何头)
+
+A/B/C) 用 NDK clang 把 crash_modmap.h 编成无 CRT 的 x86_64 DLL, 再对合成输入断言
+     编译: D:\ohos-tools\sdk\native\llvm\bin\clang++.exe --target=x86_64-pc-windows-msvc -ffreestanding -nostdlib -fno-stack-protector -fno-builtin-memcpy ...
+  [PASS] crash_modmap.h 能用 NDK clang 独立编译(无头文件依赖)
+  [PASS] 无 CRT 链接通过(证明纯逻辑不引用任何运行库)
+  [PASS] ModRange 是定长 POD(4 个 8 字节字段 + 定长路径)   sizeof=128, 路径上限=96
+  [PASS] A1 只把可执行段入表(6 段: libc/libc++/bench/匿名/vdso/长路径; r--p 与 rw-p 被忽略)   入表=6 丢弃=0 行数=10
+  [PASS] A2 脏行/malformed 行不影响解析
+  [PASS] A3 段起止/文件偏移解析正确
+  [PASS] A4 非可执行段(r--p)确实没占位(索引 1 就是 libc++_shared)   idx1 start=0x7f1000000000
+  [PASS] A5 装载基址 = start - file_offset(非零偏移)   base=0x7f1fffffe000 off=0x2000
+  [PASS] A6 空路径(匿名可执行映射)有明确名字   (无路径/匿名映射)
+  [PASS] A7 [vdso] 这类方括号名字原样保留   [vdso]
+  [PASS] A8 超长路径截断但保留尾部(文件名还在)   ...dddddddddddddddd/libs/arm64/e ... eeee/libverysuperlongname.so
+  [PASS] A9 数组满就停止并记下'还有 N 段没记'   入表=4 没记=2
+  [PASS] A10 表满时的说明文案   已记录 4 个可执行段(定长表上限 4), 还有 2 段没记(表满即停: 没记的段不参与下面的归属判定)
+  [PASS] A11 没丢段时的说明文案   已记录 6 个可执行段(定长表上限 128), 没有段被丢弃(全部可执行段都已入表)
+  [PASS] A12 空表时的说明文案   (模块表为空: 安装时读 /proc/self/maps 失败, 或进程没有任何可执行映射)
+  [PASS] B1 pc 命中: 路径 + 偏移 + 该段范围, 逐字节一致   
+        得到: pc     : pc=0x7f0000000500 落在 /system/lib64/libc.so +0x500（该模块映射段 0x7f0000000000-0x7f0000100000, 装载基址 0x7f0000000000, 文件偏移 0x0; +0x… 就是 nm/addr2line 直接可用的 vaddr）
+  [PASS] B2 返回值 = 实际写入长度   n=213 len=213
+  [PASS] B3 lr 命中 libc++_shared.so(非零基址也正确)   lr     : lr=0x7f1000001000 落在 /system/lib64/libc++_shared.so +0x1000（该模块映射段 0x7f1000000000-0x7f1000020000, 装载基址 0x7f1000000000, 文件偏移 0x0; +0x… 就是 nm/addr2line 直接可用的 vaddr）
+  [PASS] B4 文件偏移非零的库: 偏移按装载基址算(nm 可直接反查)   pc     : pc=0x7f2000000500 落在 /system/lib64/libaurorabench.so +0x2500（该模块映射段 0x7f2000000000-0x7f2000010000, 装载基址 0x7f1fffffe000, 文件偏移 0x2000; +0x… 就是 nm/addr2line 直接可用的 vaddr）
+  [PASS] B5 跨段(段间空隙, end 是开区间) -> 未命中   pc     : pc=0x7f1000020000 不在已记录的任何可执行段内(可能是匿名映射/被 dlopen 后 dlclose 的库)
+  [PASS] B6 未命中措辞与任务要求逐字一致
+  [PASS] B7 落在非可执行段(r--p) -> 未命中(证明只认可执行段)   pc     : pc=0x7f0000150000 不在已记录的任何可执行段内(可能是匿名映射/被 dlopen 后 dlclose 的库)
+  [PASS] B8 空表时的措辞(自己说明读 maps 失败)   pc     : pc=0x7f0000000500 不在已记录的任何可执行段内(可能是匿名映射/被 dlopen 后 dlclose 的库) [模块表为空: 安装时读 /proc/self/maps 失败]
+  [PASS] B9 小缓冲下不越界且仍以 NUL 结尾   n=63
+  [PASS] C1 合成栈: 命中数 = 落在可执行段里的字数   found=4 stored=4
+  [PASS] C2 槽位偏移按字节给出(第 0/2/5/7 个字)   [0, 16, 40, 56]
+  [PASS] C3 候选值原样保留(段首地址也算命中)
+  [PASS] C4 候选行文本逐字节一致(前缀=栈上候选返回地址:)    
+        得到:          栈上候选返回地址: /system/lib64/libc.so +0x500（该模块映射段 0x7f0000000000-0x7f0000100000; 槽位 sp+0x0, 值 0x7f0000000500）
+  [PASS] C5 第二个候选指向 libc++_shared.so            栈上候选返回地址: /system/lib64/libc++_shared.so +0x1000（该模块映射段 0x7f1000000000-0x7f1000020000; 槽位 sp+0x10, 值 0x7f1000001000）
+  [PASS] C6 非命中值(不该出现, 兜底措辞)
+  [PASS] C7 上限 2 -> 只列 2 个但命中总数照实报   found=4 stored=2
+  [PASS] C8 窗口不足 8 字节时不扫(不越界)
+  [PASS] C9 空模块表 -> 0 个候选(不死循环)
+  [PASS] E1 逐项行文本逐字节一致   
+        得到:          #1 phase="GB7 单核" item="File Compression" 1/16 VmSize=1390152 kB VmRSS=152432 kB VmHWM=168400 kB Threads=12 ΔVmSize=+190152 kB ΔVmRSS=+2432 kB
+  [PASS] E2 增量最大的一项 = VmSize 增量最大那一项(#3 Asset Compression)   worst=#3 ΔVmSize=12413764 ΔVmRSS=-250092
+  [PASS] E3 报告里给出逐项 VmSize/VmRSS + 相对上一项的增量   行数=4
+  [PASS] E4 报告里点名增量最大的一项
+  [PASS] E5 异常行自带'本项占用异常, 见该项明细'
+  [PASS] E6 判据写死 512 MB / 256 MB
+  [PASS] E7 也点出 RSS 超标的那一项(Text Processing ΔVmRSS>256MB)
+  [PASS] E8 判据是严格大于: 恰好 512MB/256MB 不标, 多 1 kB 才标
+  [PASS] E9 读不到就写读不到            #1 phase="P" item="I" 1/1 VmSize=(读不到) VmRSS=(读不到) VmHWM=(读不到) Threads=(读不到) ΔVmSize=(未结算/读不到) ΔVmRSS=(未结算/读不到)
+  [PASS] E10 崩溃时正在跑的那一项有明确标注            #1 phase="P" item="I" 1/1 VmSize=123 kB VmRSS=45 kB VmHWM=(读不到) Threads=(读不到) ΔVmSize=(未结算/读不到) ΔVmRSS=(未结算/读不到) [崩溃时正在跑该项: 结束时的采样还没拿到]
+  [PASS] E11 记录里只列最近 N 项并指路完整文件
+  [PASS] E12 表满时写还有 N 项没记
+  [PASS] E13 正在更新表时说明最后一行可能不完整
+  [PASS] E14 一项都没采到时说明
+  [PASS] E15 报告末尾给出逐项账目文件路径
+  [PASS] E16 开/结算返回正确的行号   open=0 close=0 open=1 close=1
+  [PASS] E17 增量 = 结束值 - 开始值(= 本项造成的增长)            #2 phase="GB7 单核" item="Asset Compression" 3/16 VmSize=13000000 kB VmRSS=300000 kB VmHWM=451640 kB Threads=14 ΔVmSize=+11990000 kB ΔVmRSS=+198000 kB [本项占用异常, 见该项明细]
+  [PASS] E18 超过 512 MB 的那一项自动标异常
+  [PASS] E19 结算是幂等的(同一行不会被算两遍 / 写两遍)
+  [PASS] E20 增量最大的一项就是 Asset Compression 那一行   worst=#2
+  [PASS] E21 表满后不再入表, 只把'还有几项没记'加一   count=2 dropped=1
+  [PASS] E22 采样读不到时: 行照样结算, 但增量写'未结算/读不到'            #1 phase="P" item="X" 1/1 VmSize=(读不到) VmRSS=(读不到) VmHWM=(读不到) Threads=(读不到) ΔVmSize=(未结算/读不到) ΔVmRSS=(未结算/读不到)
+
+F) 仿真输出: 用同一份真代码(crash_modmap.h)把一条真实形状的崩溃记录拼出来
+     ----- AURORA NATIVE CRASH -----
+     when   : 2026-10-12T09:41:07.318Z  epoch_ms=1791798067318
+     signal : 11 SIGSEGV  si_code=1 SEGV_MAPERR(地址未映射=野指针/越界)  si_addr=0x18
+     thread : pid=24817 tid=24853 (工作线程: 负载线程崩的)
+     pc/lr  : pc=0x5a77adadd0 lr=0x5a7610f2c4 sp=0x7fdc01a3b0
+             (用未 strip 的 libaurorabench.so 按 pc/lr 反查符号)
+     module : pc 不在 libaurorabench.so 的代码段内 => 崩在系统库/运行时/其它 .so [self_base=0x5b278c1000 text=0x5b279a4000-0x5b27d15000]
+     modmap : 已记录 3 个可执行段(定长表上限 128), 没有段被丢弃(全部可执行段都已入表)  刷新次数=37 最近刷新=2026-10-12T09:41:07.201Z
+     pc     : pc=0x5a77adadd0 落在 /system/lib64/libc++_shared.so +0xadadd0（该模块映射段 0x5a77000000-0x5a77b00000, 装载基址 0x5a77000000, 文件偏移 0x0; +0x… 就是 nm/addr2line 直接可用的 vaddr）
+     lr     : lr=0x5a7610f2c4 落在 /system/lib64/libc.so +0x10f2c4（该模块映射段 0x5a76000000-0x5a76200000, 装载基址 0x5a76000000, 文件偏移 0x0; +0x… 就是 nm/addr2line 直接可用的 vaddr）
+             (pc 不在我们的 .so 里 ≠ 不是我们的 bug: 我们的 std::string / operator new 住在 libc++_shared.so, 堆被写坏之后最先炸的通常是 libc.so 里的 malloc/free。上面这两行 + 下一条的栈上候选才够定罪或洗清)
+     itemmem: 逐项地址空间归因(旁路: 每个 item 标记点读一次 /proc/self/status, 不计分)
+              #1 phase="GB7 单核" item="File Compression" 1/16 VmSize=1390152 kB VmRSS=152432 kB VmHWM=168400 kB Threads=12 ΔVmSize=+190152 kB ΔVmRSS=+2432 kB
+              #2 phase="GB7 单核" item="Text Processing" 4/16 VmSize=1621000 kB VmRSS=452900 kB VmHWM=512000 kB Threads=13 ΔVmSize=+230848 kB ΔVmRSS=+300468 kB [本项占用异常, 见该项明细]
+              #3 phase="GB7 单核" item="Asset Compression" 6/16 VmSize=14034764 kB VmRSS=202808 kB VmHWM=451640 kB Threads=14 ΔVmSize=+12413764 kB ΔVmRSS=-250092 kB [本项占用异常, 见该项明细]
+              #4 phase="GB7 单核" item="HDR" 9/16 VmSize=14034764 kB VmRSS=202808 kB VmHWM=451640 kB Threads=14 ΔVmSize=0 kB ΔVmRSS=0 kB
+     itemmem: 增量最大的一项: #3 phase="GB7 单核" item="Asset Compression" ΔVmSize=+12413764 kB ΔVmRSS=-250092 kB => 本项占用异常, 见该项明细
+     itemmem: 判据(写死): 单项 ΔVmSize > 524288 kB(512 MB) 或 ΔVmRSS > 262144 kB(256 MB) => 该行标 "本项占用异常, 见该项明细"
+     itemmem: 逐行明细文件: /data/app/el2/100/base/com.aurora.bench/haps/entry/files/native_memory.txt (进程被 SIGKILL 时, 这份逐项账目是盘上唯一的地址空间归因)
+     item   : phase="GB7 单核" item="HDR" index=11/16 marked=2026-10-12T09:41:06.902Z age_ms=416
+     memory : VmPeak=14568144 kB VmHWM(RSS峰值)=451640 kB VmRSS=202808 kB VmSize=14034764 kB Threads=14
+     at_item: rss=202804 kB hwm=451604 kB size=14034700 kB threads=14 sampled=2026-10-12T09:41:06.880Z age_ms=438  (ArkTS 调 sampleMemory() 采的, 用于判断是否逼近内存上限)
+     source : crash_guard@libaurorabench.so (仅记录, 不改负载)
+     stack  : 穷人的调用栈(粗扫崩溃线程栈上的 8 字节槽位, 落在已记录可执行段里的值当成候选返回地址; 只是候选, 不是精确回溯, 不依赖 .eh_frame/展开器)
+              栈上候选返回地址: /system/lib64/libc++_shared.so +0xadadd0（该模块映射段 0x5a77000000-0x5a77b00000; 槽位 sp+0x0, 值 0x5a77adadd0）
+              栈上候选返回地址: /system/lib64/libaurorabench.so +0x1b2000（该模块映射段 0x5b279a4000-0x5b27d15000; 槽位 sp+0x8, 值 0x5b279b2000）
+              栈上候选返回地址: /system/lib64/libc.so +0x10f2c4（该模块映射段 0x5a76000000-0x5a76200000; 槽位 sp+0x10, 值 0x5a7610f2c4）
+              栈上候选返回地址: /system/lib64/libc++_shared.so +0x500123（该模块映射段 0x5a77000000-0x5a77b00000; 槽位 sp+0x20, 值 0x5a77500123）
+              栈上候选返回地址: /system/lib64/libaurorabench.so +0x1a4000（该模块映射段 0x5b279a4000-0x5b27d15000; 槽位 sp+0x30, 值 0x5b279a4000）
+              共 5 个候选(只列前 12 个, 本次列出 5 个; 窗口 = sp 起 2048 字节). 对照看看: 命中 libaurorabench.so 的候选 = 我们的调用链; 命中 libc++_shared/libc 的候选 = 标准库内部(常见于堆被写坏后的 free)
+     ----- END AURORA NATIVE CRASH -----
+  [PASS] F1 仿真记录里 pc 落在 libc++_shared.so(真机那一次的 pc 形状)   pc     : pc=0x5a77adadd0 落在 /system/lib64/libc++_shared.so +0xadadd0（该模块映射段 0x5a77000000-0x5a77b00000, 装载基址 0x5a77000000, 文件偏移 0x0; +0x… 就是 nm/addr2line 直接可用的 vaddr）
+  [PASS] F2 仿真记录里 lr 落在 libc.so   lr     : lr=0x5a7610f2c4 落在 /system/lib64/libc.so +0x10f2c4（该模块映射段 0x5a76000000-0x5a76200000, 装载基址 0x5a76000000, 文件偏移 0x0; +0x… 就是 nm/addr2line 直接可用的 vaddr）
+  [PASS] F3 仿真记录里同时给出我们自己的调用链候选(段首地址也算)   5
+     仿真记录已写入: D:\新建文件夹\aurora-bench\entry\src\main\cpp\verify_modmap_simulated_crash.txt
+     主机 DLL: C:\Users\elysi\AppData\Local\Temp\aurora_cg_modmap_hosttest\modmap_hosttest.dll
+     (脚本生成的测试宿主: C:\Users\elysi\AppData\Local\Temp\aurora_cg_modmap_hosttest\modmap_hosttest.cpp)
+
+============================================================================================================
+结论: 82 项检查, 0 项失败
+  * A 段证明模块表解析(命中/非可执行段/空路径/方括号名/超长截断/表满计数)正确;
+  * B 段证明 pc/lr 归属三种结果(命中 / 段间空隙未命中 / 非可执行段未命中)与措辞逐字节正确;
+  * C 段证明穷人的调用栈(候选计数/槽位/上限截断/每行文本)正确;
+  * D 段证明处理器里没有任何动态链接器/分配调用, 且逐项归因接在既有标记点上、判据写死。
+  仍未验证的: 真机上的实际 pc/lr/栈内容(没有设备), 以及 native_memory.txt 的真机落盘效果。
+============================================================================================================

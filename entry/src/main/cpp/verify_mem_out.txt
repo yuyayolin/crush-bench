@@ -1,0 +1,60 @@
+============================================================================================================
+A) 峰值内存核算(单核 = threads=1 / 14 线程 = 每个 worker 私有缓冲各一份)
+============================================================================================================
+负载                 模式     主要分配                                                            单核 MB    14线程 MB
+------------------------------------------------------------------------------------------------------------
+File Compression   串行     语料 3x4MiB + 输出缓冲 1 份(池 = min(threads,12) 个槽, 串行只占 1 个)           16.2          -
+File Compression   并行     语料 12MiB + 输出缓冲池 12 槽 x zlib bound 4MiB->4.2MiB                     -       62.4
+Navigation         串行     地图 cost 3.3MB + 1 条路线的 dist 6.4MB + 二叉堆                          21.7          -
+Navigation         并行     地图共享 + 14 条路线并发: 14 x (dist 6.4MB + 二叉堆)。二叉堆实测规模很小(每条路线约 1          -      115.3
+Text Processing    两种     语料 1MiB x 224 页 单块连续分配(降内存改造已尝试但未采用, 见 gb7_batch2.cpp 注释;       224.0      224.0
+Asset Compression  两种     RGBA8 纹理 4096*4096*4B (单块连续分配, 2026-10-05 还原后单核与多核同尺寸) + p       64.0       64.0
+Photo Library      串行     源图 1024*768*3 + 1 张 jpeg(<=2.36MB) + 1 张 decoded(2.36MB)          7.0          -
+Photo Library      并行     同上 x min(threads,10) 份 jpeg/decoded(源图共享只读)                         -       49.4
+Photo Editor       串行     源图 3000*2000*3 + work 同尺寸 + rowAcc[2000]                         36.0          -
+Photo Editor       并行     与串行相同(work 缓冲按行分解, 所有线程共享同一块)                                       -       36.0
+HDR                串行     6 张源 SDR 1536*832*3*1B = 21.94 + 输出 ldr 同尺寸 3.66 + rowAcc[       25.6          -
+HDR                并行     与串行相同: 2026-10-05 还原后多核与单核同分辨率(1536x832), 源图/输出都是共享的(每行独立,          -       25.6
+Ray Tracer         两种     输出 384*384*3B = 0.42(单核与多核同尺寸); 逐像素临时量全在栈上, 无 per-worker 堆        0.4        0.4
+Game Physics       两种     6 个 float[n=8192] + 每步 head[64^3]int + next[8192]int(保持串行)        1.2        1.2
+PDF Viewer         串行     1 份页位图 1275*1650*3 + edges(<=600000*24B) + PathB(<=400000        26.1          -
+PDF Viewer         并行     同上 + (parThreads-1) 份 worker 暂存(每份 edges 上限 13.7MB + cov 5          -      198.8
+HTML5 Browser      串行     1 槽: 帧缓冲 1024*768*4 + DOM(<=8192 节点) + arena 1MiB + boxes         6.4          -
+HTML5 Browser      并行     min(threads,8) 槽 x 每槽 3MiB 帧缓冲 + 各自 DOM/arena/boxes                 -       51.2
+Audio Encoder      串行     PCM 960000*2B + 位流(帧级) + blockBuf 2*4096*2B + scratch             2.1          -
+Audio Encoder      并行     同上 + 每 worker 私有位流/blockBuf/scratch(各 ~0.3MB)                       -        6.0
+Video Enc/Dec      串行     y/u/v + ref*3 + rec*3 + MbStore(3600*6*64*2B=2.6MB) + 码流 4       15.7          -
+Video Enc/Dec      并行     同上(宏块级并行, 无 per-worker 大缓冲; 解码另 + 3 帧)                              -       18.3
+SfM                两种     hw 5 个图像级 float[1280*960](19.5MB) + blur + images 10 张(12.       70.0       70.3
+Clang              两种     bump arena(单轮峰值 ~20MB, chunk 上限 16MB) + 源码/汇编缓冲                  40.0       40.0
+------------------------------------------------------------------------------------------------------------
+红线(任务给定): 单核 > 400MB 或 多核 > 800MB 需标红。
+
+============================================================================================================
+B) 大缓冲的尺寸来源核对(尺寸是否随标定常量一起变, 而不是写死旧值)
+============================================================================================================
+  [PASS] text 语料缓冲              gb7_batch2.cpp                     尺寸来源=pageSize * pages       pageSize/pages 是标定常量(1MiB/224), 缓冲由它们算出 -> 未写死 64KiB/128
+  [PASS] partial 槽位             gb7_batch2.cpp                     尺寸来源=pages                  槽数 = 页数, 随 128->192->224 一起变
+  [PASS] 纹理缓冲                   gb7_batch2.cpp                     尺寸来源=texW*texH*4            尺寸由 texW/texH 算出 -> 未写死 2048/3584/5120
+  [PASS] 块分解边界                  gb7_batch2.cpp                     尺寸来源=texW/4                 块数由纹理尺寸推导
+  [PASS] 地图 cost                gb7_batch2.cpp                     尺寸来源=w*h                    地图尺寸是参数 -> 896x896 自动生效
+  [PASS] 照片/工作缓冲                gb7_batch3.cpp                     尺寸来源=w*h*3                  由 w/h 算出
+  [PASS] photoAcc 槽位            gb7_batch3.cpp                     尺寸来源=photos                 槽数 = 张数, 随 3->7->12->10 一起变
+  [PASS] rowAcc 槽位              gb7_batch3.cpp                     尺寸来源=h                      按行数分配
+  [PASS] 宏块中间结果                 gb7_video.cpp                      尺寸来源=kVMbCount4             由分辨率推导(分辨率未改)
+  [PASS] PCM 缓冲                 gb7_audio.cpp                      尺寸来源=frames*channels        按真实样本数分配 -> 60s->1s 自动缩小
+  [PASS] 帧数                     gb7_audio.cpp                      尺寸来源=totalFrames/4096       块数由样本数算出, 未写死 703
+  [PASS] 页位图                    gb7_pdf.cpp                        尺寸来源=kPgW*kPgH*3            页面尺寸与页数无关, 页数 5->2 只影响渲染页数
+  [PASS] 图级暂存                   gb7_sfm.cpp                        尺寸来源=kImgW*kImgH            分辨率未改; 特征数 900->560 只影响候选上限
+  [PASS] 候选上限                   gb7_sfm.cpp                        尺寸来源=kMaxFeat*12            候选上限随特征数一起变(还原后 kMaxFeat=560)
+  [PASS] 帧缓冲                    gb7_browser.cpp                    尺寸来源=kFbW*kFbH              分辨率未改
+  [PASS] arena chunk 上限         gb7_clang.cpp                      尺寸来源=16MiB                  与标定无关(按轮回退)
+
+============================================================================================================
+结论: 峰值内存最大的两项依次为 Text Processing(224 MiB 单块, 降内存改造未采用) 与 Asset Compression(64 MiB 单块);
+      Navigation 并行是量级不确定项: 典型 ~113MB, 最坏 ~271MB(取决于二叉堆实际规模, 见报告 3.2);
+      Text Processing 的降内存方案(192MiB -> 1MiB)已实现并验证到 2 页规模, 但 >=3 页存在跨页字节错位,
+      为不污染 pages/s 口径已回退; 详见 gb7_batch2.cpp 的'内存保险'注释与 cpp/verify_gb7_textmem.py。
+      所有项都远低于任务给定红线(单核 400MB / 多核 800MB), 但这不等于设备侧不会被回收 —— 见报告第 4 节。
+      全部大缓冲的尺寸都由标定常量推导, 没有发现按旧尺寸写死的缓冲。
+============================================================================================================

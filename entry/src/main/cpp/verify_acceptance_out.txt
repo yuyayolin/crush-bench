@@ -1,0 +1,59 @@
+====================================================================================================
+[A] 公开真值表核对(reference_compare.cpp + sn_renderer.cpp)
+====================================================================================================
+  [PASS] A1 GB7 真值 File Compression -- 226 MB/s -> 1589 (USER_PROVIDED_PUBLIC_TRUTH)
+  [PASS] A1 GB7 真值 Navigation -- 11.0 routes/s -> 2004 (USER_PROVIDED_PUBLIC_TRUTH)
+  [PASS] A1 GB7 真值 HTML5 Browser -- 23.0 pages/s -> 1839 (USER_PROVIDED_PUBLIC_TRUTH)
+  [PASS] A1 GB7 真值 PDF Viewer -- 67.2 Mpx/s -> 1941 (USER_PROVIDED_PUBLIC_TRUTH)
+  [PASS] A1 GB7 真值 Photo Library -- 5.62 images/s -> 1639 (USER_PROVIDED_PUBLIC_TRUTH)
+  [PASS] A1 GB7 真值 Clang -- 2.78 Klines/s -> 1697 (USER_PROVIDED_PUBLIC_TRUTH)
+  [PASS] A1 GB7 真值 Text Processing -- 76.3 pages/s -> 1582 (USER_PROVIDED_PUBLIC_TRUTH)
+  [PASS] A1 GB7 真值 Asset Compression -- 26.8 MB/s -> 1602 (USER_PROVIDED_PUBLIC_TRUTH)
+  [PASS] A2 GB7 真值的来源种类都是 USER_PROVIDED_PUBLIC_TRUTH(不许写成官方) -- 8 项全部标为用户提供的公开真值
+  [PASS] A3 GB7 复合分真值 1633 / 6802 在代码里 -- kGb7SingleCompositeTruth=1633, kGb7MultiCompositeTruth=6802
+  [PASS] A4 参考机写明了, 且注明不是官方基准机 -- referenceDevice + 说明
+  [PASS] A5 官方基准机也写了(GB7 官方明文: Legion + RTX 4060 = 100,000) -- caveats 里写了官方基准机
+  [PASS] A6 SNL 真值 Kirin 9030 Pro -- 991 (USER_PROVIDED_PRIMARY_OBSERVATION)
+  [PASS] A6 SNL 真值 Kirin 9020 -- 454 (VERIFIED_UL_DB)
+  [PASS] A6 SNL 真值 Kirin 9000S -- 303 (UNVERIFIED)
+  [PASS] A7 来源强度逐条标注: 9020=454 有 UL 官方成绩库出处 / 9030 Pro=991 是用户拍屏的一手证据 / 9000S=303 仍未证实(第三方不写成官方) -- 454=VERIFIED_UL_DB / 991=USER_PROVIDED_PRIMARY_OBSERVATION / 303=UNVERIFIED
+  [PASS] A7b 991 这条写全了: 机型 / 测试项 / 总分 / 平均帧率 7.34 / 来源=用户拍屏(一手证据) -- 缺: []
+  [PASS] A7c 991 原有的两条 caveat 保留(公开渠道查不到该机型 + 与 956/998/993 不完全一致) -- 缺: []
+  [PASS] A7d 自洽核对写在源码里: 991 / 135 = 7.3407 fps 与拍屏上的 7.34 fps 一致 -- 991 / 135 = 7.3407 FPS
+  [PASS] A8 每条真值都带来源文字(不是光一个数) -- SNL 三条都带 note(共 3 条)
+
+[B] 对照逻辑与官方口径复算
+====================================================================================================
+  [PASS] B1 官方公式 score = 帧率 x 135 被原样使用 -- k3dmarkNomadScale = 135.0
+  [PASS] B2 分辨率归一化方向正确(乘 0.5625, 不是除) -- kScorePerFps = 135 x 1.0 x 0.5625 = 75.9375
+  [PASS] B3 Kirin 9030 Pro: 991 分 -> 7.34 fps(1440p) -> 本尺子 991.0 分(闭环) -- 991.000000
+  [PASS] B3 Kirin 9020: 454 分 -> 3.36 fps(1440p) -> 本尺子 454.0 分(闭环) -- 454.000000
+  [PASS] B3 Kirin 9000S: 303 分 -> 2.24 fps(1440p) -> 本尺子 303.0 分(闭环) -- 303.000000
+  [PASS] B4 deltaPercent 的定义式写进了报告 -- referenceComparison.deltaPercentDefinition
+  [PASS] B5 明确写了这是跨负载换算, 不是官方换算 -- comparisonIsNotAnOfficialConversion=true
+
+[C] 工作负载的代表性(每一项都要有一句话真实用途)
+====================================================================================================
+  [PASS] C1 16 项 CPU + 11 项 GPU + 本小节都有真实用途 -- 共 28 项全部覆盖
+  [PASS] C2 每句用途都不是空话(长度 + 含具体场景词) -- 全部通过
+  [PASS] C3 用途表覆盖了本小节自身的名字 -- Aurora Nomad Light -> 非光追 game-like 场景: 地形求交 + 延迟 PBR 着色 + 多光源
+
+[D] 报告样例(六条验收标准对应的字段都在)
+====================================================================================================
+  [PASS] D1 sn_json_sample.json 可解析 -- 已解析
+  [PASS] D2 第 1 可重复性 条对应字段在样例里 -- repeatability
+  [PASS] D2 第 2 温度/频率/降频 条对应字段在样例里 -- environment
+  [PASS] D2 第 3 参考分对照 条对应字段在样例里 -- referenceComparison
+  [PASS] D2 第 4 真实用途 条对应字段在样例里 -- realUse
+  [PASS] D2 第 5 可解释性 条对应字段在样例里 -- score, work
+  [PASS] D2 第 6 运行环境/防跑分模式 条对应字段在样例里 -- environment
+  [PASS] D3 样例里 中位/最小/最大/离散度 四件套齐全 -- repeatability.statistics.fps.{median,min,max,dispersion}
+  [PASS] D4 样例里带醒目的可信度判断 -- repeatability.credibility.verdict
+  [PASS] D5 样例里带逐轮原始值(不是只留最好一轮) -- roundsDetail[1] + roundValuesAreAllListed=true
+  [PASS] D6 样例里温度与频率都给了(且说明 GPU 频率读不到) -- environment.temperature / cpuKhz / gpuClockReadable=false
+  [PASS] D7 样例里对照表带来源种类 -- referenceComparison.gpuSnl.sourceKind
+  [PASS] D8 样例里写明了查不到的项 -- referenceComparison.notAvailable[]
+
+====================================================================================================
+共 43 项断言, 失败 0 项 -> PASS
+====================================================================================================

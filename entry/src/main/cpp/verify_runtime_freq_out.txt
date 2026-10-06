@@ -1,0 +1,76 @@
+====================================================================================================
+[A] 采样模块本身
+====================================================================================================
+  [PASS] A1 cpu_freq_sample.h / .cpp 都存在
+  [PASS] A2 接口 auroraFreqSampleSessionBegin 有声明
+  [PASS] A3 接口 auroraFreqSampleSessionBegin 有定义
+  [PASS] A2 接口 auroraFreqMarkStart 有声明
+  [PASS] A3 接口 auroraFreqMarkStart 有定义
+  [PASS] A2 接口 auroraFreqMarkStop 有声明
+  [PASS] A3 接口 auroraFreqMarkStop 有定义
+  [PASS] A2 接口 auroraFreqSampleSessionEnd 有声明
+  [PASS] A3 接口 auroraFreqSampleSessionEnd 有定义
+  [PASS] A2 接口 auroraFreqSampleText 有声明
+  [PASS] A3 接口 auroraFreqSampleText 有定义
+  [PASS] A4 数据源就是 scaling_cur_freq(kHz)
+  [PASS] A5 参考项 governor / thermal_zone 都读了
+  [PASS] A6 采样线程的间隔常量在 200~500 ms 之间
+  [PASS] A7 采样路径无分配(没有 new/malloc/std::string/vector/opendir 出现在 tick 路径里)
+  [PASS] A8 逐项 errno 取证字段齐备(curFreqErrno/threadStatErrno/govErrno/thermalErrno)
+  [PASS] A9 最小/中位/最大 + 样本数 + 采样核 都在文本里
+  [PASS] A10 口径声明逐字写在文本里(单核/多核两种)
+  [PASS] A11 会话起停做了异常兜底(诊断不让负载失败)
+
+====================================================================================================
+[B] 16 项负载的计时区间打点
+====================================================================================================
+  [PASS] B1 gb7_filecompress.cpp:461 markStart 紧邻 t0 之前
+  [PASS] B2 gb7_filecompress.cpp:491 markStop 紧邻 t1 之后
+  [PASS] B1 gb7_batch2.cpp:202 markStart 紧邻 t0 之前
+  [PASS] B2 gb7_batch2.cpp:222 markStop 紧邻 t1 之后
+  [PASS] B1 gb7_batch2.cpp:538 markStart 紧邻 t0 之前
+  [PASS] B2 gb7_batch2.cpp:546 markStop 紧邻 t1 之后
+  [PASS] B1 gb7_batch2.cpp:693 markStart 紧邻 t0 之前
+  [PASS] B2 gb7_batch2.cpp:802 markStop 紧邻 t1 之后
+  [PASS] B1 gb7_batch3.cpp:151 markStart 紧邻 t0 之前
+  [PASS] B2 gb7_batch3.cpp:190 markStop 紧邻 t1 之后
+  [PASS] B1 gb7_batch3.cpp:320 markStart 紧邻 t0 之前
+  [PASS] B2 gb7_batch3.cpp:382 markStop 紧邻 t1 之后
+  [PASS] B1 gb7_batch3.cpp:556 markStart 紧邻 t0 之前
+  [PASS] B2 gb7_batch3.cpp:640 markStop 紧邻 t1 之后
+  [PASS] B1 gb7_batch3.cpp:1021 markStart 紧邻 t0 之前
+  [PASS] B2 gb7_batch3.cpp:1069 markStop 紧邻 t1 之后
+  [PASS] B1 gb7_batch3.cpp:1157 markStart 紧邻 t0 之前
+  [PASS] B2 gb7_batch3.cpp:1218 markStop 紧邻 t1 之后
+  [PASS] B1 gb7_pdf.cpp:3171 markStart 紧邻 t0 之前
+  [PASS] B2 gb7_pdf.cpp:3258 markStop 紧邻 t1 之后
+  [PASS] B1 gb7_audio.cpp:871 markStart 紧邻 t0 之前
+  [PASS] B2 gb7_audio.cpp:937 markStop 紧邻 t1 之后
+  [PASS] B1 gb7_video.cpp:1733 markStart 紧邻 t0 之前
+  [PASS] B2 gb7_video.cpp:1748 markStop 紧邻 t1 之后
+  [PASS] B1 gb7_video.cpp:1921 markStart 紧邻 t0 之前
+  [PASS] B2 gb7_video.cpp:1999 markStop 紧邻 t1 之后
+  [PASS] B1 gb7_browser.cpp:2833 markStart 紧邻 t0 之前
+  [PASS] B2 gb7_browser.cpp:2859 markStop 紧邻 t1 之后
+  [PASS] B1 gb7_sfm.cpp:2158 markStart 紧邻 t0 之前
+  [PASS] B2 gb7_sfm.cpp:2523 markStop 紧邻 t1 之后
+  [PASS] B1 gb7_clang.cpp:3424 markStart 紧邻 t0 之前
+  [PASS] B2 gb7_clang.cpp:3443 markStop 紧邻 t1 之后
+  [PASS] B3 计时区间共 16 对(16 项 GB7 CPU 负载)
+  [PASS] B4 markStart 共 16 处
+  [PASS] B5 markStop  共 16 处
+
+====================================================================================================
+[C] 旁路接线(结果进 note + 进 JSON, 且不进任何计分)
+====================================================================================================
+  [PASS] C1 Gb7Outcome 有 runFreq 字段
+  [PASS] C2 gb7.cpp 里 runFreq 取自 auroraFreqSampleText()
+  [PASS] C3 这一行被追加进 cpuInfo.cpuAllowedText(每项 note 走的那一行)
+  [PASS] C4 放不下时退到 o.diag(同样进 note, 不丢信息)
+  [PASS] C5 napi 输出 runFreq 旁路字段(成功路径与失败路径形状一致)
+  [PASS] C6 计分公式一个字未动(score = k * (value * e.conv))
+  [PASS] C7 ENTRIES 表里的 k/conv 未被触碰(抽查 3 项)
+
+====================================================================================================
+全部通过(1) 
+====================================================================================================

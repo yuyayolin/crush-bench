@@ -1,0 +1,7 @@
+{
+  "string": [
+    { "name": "module_desc", "value": "Crush分 entry" },
+    { "name": "EntryAbility_desc", "value": "Crush分 主入口" },
+    { "name": "EntryAbility_label", "value": "Crush分" }
+  ]
+}

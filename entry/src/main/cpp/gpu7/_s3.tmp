@@ -1,0 +1,348 @@
+// ---------------------------------------------------------------------------
+// 着色器源码 3/3: Photo Filter / RAW / Super Resolution / Video Filter
+// ---------------------------------------------------------------------------
+
+const char* FS_PF_LUT = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uTex;
+uniform sampler2D uLut;
+uniform float uFrame;
+void main() {
+    vec3 c = texture(uTex, vUV).rgb;
+    float r = texture(uLut, vec2(c.r, 0.5)).r;
+    float g = texture(uLut, vec2(c.g, 0.5)).g;
+    float b = texture(uLut, vec2(c.b, 0.5)).b;
+    c = vec3(r, g, b);
+    c = clamp(c, 0.0, 1.0);
+    float gr = fract(sin((vUV.x * 1234.5 + vUV.y * 678.9) * 43758.5453) * 43758.5453);
+    c += (gr - 0.5) * (0.010 + 0.004 * sin(uFrame));
+    fragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
+}
+)GLSL";
+
+const char* FS_PF_SAT = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uTex;
+void main() {
+    vec3 c = texture(uTex, vUV).rgb;
+    float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    c = clamp(mix(vec3(l), c, 1.42), 0.0, 1.0);
+    fragColor = vec4(c, 1.0);
+}
+)GLSL";
+
+const char* FS_PF_SHARPEN = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uTex;
+uniform vec2 uTexel;
+void main() {
+    vec3 s = texture(uTex, vUV).rgb;
+    vec3 sum = vec3(0.0);
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            float fx = float(x);
+            float fy = float(y);
+            vec3 t = texture(uTex, vUV + vec2(fx * uTexel.x, fy * uTexel.y)).rgb;
+            float w = 1.0;
+            if (x == 0 && y == 0) {
+                w = 1.0;
+            } else if (x == 0 || y == 0) {
+                w = 1.0;
+            }
+            sum += t * w;
+        }
+    }
+    sum -= s * 8.0;
+    vec3 sharp = s + sum * 0.65;
+    vec3 c = clamp(mix(s, sharp, 1.0), 0.0, 1.0);
+    fragColor = vec4(c, 1.0);
+}
+)GLSL";
+
+const char* FS_PF_VIGNETTE = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uTex;
+void main() {
+    vec3 c = texture(uTex, vUV).rgb;
+    vec2 d = vUV - vec2(0.5);
+    float r = dot(d, d) * 2.0;
+    float v = 1.0 - 0.55 * smoothstep(0.10, 0.85, r);
+    fragColor = vec4(clamp(c * v, 0.0, 1.0), 1.0);
+}
+)GLSL";
+
+const char* FS_PF_SEPIA = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uTex;
+void main() {
+    vec3 c = texture(uTex, vUV).rgb;
+    float l = dot(c, vec3(0.299, 0.587, 0.114));
+    vec3 sep = vec3(l * 1.07, l * 0.94, l * 0.74);
+    c = mix(c, sep, 0.65);
+    c = clamp((c - 0.5) * 1.05 + 0.5, 0.0, 1.0);
+    fragColor = vec4(c, 1.0);
+}
+)GLSL";
+
+// ---------------- RAW: 合成 Bayer CFA + 双线性去马赛克 + 色彩 ----------------
+
+const char* FS_RAW_BAYER = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform float uFrame;
+float hash21(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+void main() {
+    vec2 uv = vUV;
+    vec3 c = vec3(0.0);
+    c += vec3(0.55, 0.40, 0.22) * smoothstep(0.0, 0.7, uv.y);
+    c += vec3(0.18, 0.32, 0.55) * (1.0 - uv.y);
+    for (int k = 0; k < 10; k++) {
+        float fk = float(k) + 1.0;
+        float a = uv.x * 6.0 * fk + uv.y * 3.0 * fk + uFrame * 0.001;
+        c += vec3(sin(a) * 0.02, cos(a * 1.7) * 0.02, sin(a * 0.5) * 0.02);
+    }
+    c *= 0.85 + 0.30 * hash21(floor(uv * vec2(200.0, 150.0)));
+    vec2 t = floor(uv * vec2(4000.0, 3000.0));
+    int tx = int(t.x);
+    int ty = int(t.y);
+    int ex = tx - (tx / 2) * 2;
+    int ey = ty - (ty / 2) * 2;
+    float v = 0.0;
+    if (ex == 0 && ey == 0) {
+        v = c.r;
+    } else if (ex == 1 && ey == 1) {
+        v = c.b;
+    } else {
+        v = c.g;
+    }
+    fragColor = vec4(clamp(v, 0.0, 1.0), 0.0, 0.0, 1.0);
+}
+)GLSL";
+
+const char* FS_RAW_DEMOSAIC = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uBayer;
+uniform vec2 uTexel;
+void main() {
+    vec2 uv = vUV;
+    vec2 t = uTexel;
+    vec2 tc = floor(uv / t);
+    int tx = int(tc.x);
+    int ty = int(tc.y);
+    int ex = tx - (tx / 2) * 2;
+    int ey = ty - (ty / 2) * 2;
+    float c = texture(uBayer, uv).r;
+    float n = texture(uBayer, uv + vec2(0.0, t.y)).r;
+    float s = texture(uBayer, uv - vec2(0.0, t.y)).r;
+    float e = texture(uBayer, uv + vec2(t.x, 0.0)).r;
+    float w = texture(uBayer, uv - vec2(t.x, 0.0)).r;
+    float r = c;
+    float g = (n + s + e + w) * 0.25;
+    float b = c;
+    if (ex == 0 && ey == 0) {
+        b = (texture(uBayer, uv + vec2(t.x, t.y)).r + texture(uBayer, uv - vec2(t.x, t.y)).r +
+             texture(uBayer, uv + vec2(t.x, -t.y)).r + texture(uBayer, uv + vec2(-t.x, t.y)).r) * 0.25;
+        g = (n + s + e + w) * 0.25;
+        r = c;
+    } else if (ex == 1 && ey == 1) {
+        r = (texture(uBayer, uv + vec2(t.x, t.y)).r + texture(uBayer, uv - vec2(t.x, t.y)).r +
+             texture(uBayer, uv + vec2(t.x, -t.y)).r + texture(uBayer, uv + vec2(-t.x, t.y)).r) * 0.25;
+        g = (n + s + e + w) * 0.25;
+        b = c;
+    } else if (ex == 0) {
+        r = (e + w) * 0.5;
+        b = (n + s) * 0.5;
+        g = c;
+    } else {
+        r = (n + s) * 0.5;
+        b = (e + w) * 0.5;
+        g = c;
+    }
+    fragColor = vec4(r, g, b, 1.0);
+}
+)GLSL";
+
+const char* FS_RAW_COLOR = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uTex;
+uniform float uFrame;
+void main() {
+    vec3 c = texture(uTex, vUV).rgb;
+    c *= vec3(1.85, 1.00, 1.42);
+    float r = dot(c, vec3(1.18, -0.12, -0.06));
+    float g = dot(c, vec3(-0.09, 1.12, -0.03));
+    float b = dot(c, vec3(0.02, -0.14, 1.12));
+    c = vec3(r, g, b);
+    c = max(c, vec3(0.0));
+    c = pow(c * (0.95 + 0.05 * sin(uFrame * 0.01)), vec3(1.0 / 2.2));
+    fragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
+}
+)GLSL";
+
+// ---------------- Super Resolution (960x540 -> 3840x2160, 3 层 3x3 卷积) ----------------
+
+const char* VS_PASS = R"GLSL(#version 300 es
+layout(location = 0) in vec2 aPos;
+out vec2 vUV;
+void main() {
+    vUV = aPos * 0.5 + 0.5;
+    gl_Position = vec4(aPos, 0.0, 0.0, 1.0);
+}
+)GLSL";
+
+const char* FS_SR_CONV = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uIn0;
+uniform sampler2D uIn1;
+uniform sampler2D uIn2;
+uniform sampler2D uIn3;
+uniform vec2 uTexel;
+uniform vec2 uOffset;
+uniform vec2 uCh;
+uniform float uRelu;
+uniform float uFrame;
+void main() {
+    vec4 s0 = vec4(0.0);
+    vec4 s1 = vec4(0.0);
+    vec4 s2 = vec4(0.0);
+    vec4 s3 = vec4(0.0);
+    for (int y = 0; y < 3; y++) {
+        for (int x = 0; x < 3; x++) {
+            vec2 o = (vec2(float(x), float(y)) - 1.0) * uTexel;
+            float fy = float(y);
+            float fx = float(x);
+            float wgt = (1.0 + 0.05 * sin(uFrame * 0.01 + fy)) * (1.0 + 0.05 * cos(uFrame * 0.013 + fx));
+            s0 += texture(uIn0, vUV + o) * wgt;
+            s1 += texture(uIn1, vUV + o) * wgt;
+            s2 += texture(uIn2, vUV + o) * wgt;
+            s3 += texture(uIn3, vUV + o) * wgt;
+        }
+    }
+    s0 = s0 * 0.1111111 + s0.yzwx * 0.02;
+    s1 = s1 * 0.1111111 + s1.yzwx * 0.02;
+    s2 = s2 * 0.1111111 + s2.yzwx * 0.02;
+    s3 = s3 * 0.1111111 + s3.yzwx * 0.02;
+    if (uRelu > 0.5) {
+        s0 = max(s0, vec4(0.0));
+        s1 = max(s1, vec4(0.0));
+        s2 = max(s2, vec4(0.0));
+        s3 = max(s3, vec4(0.0));
+    }
+    vec4 o = vec4(0.0);
+    if (uCh.x < 0.5) {
+        o = s0;
+    } else if (uCh.x < 1.5) {
+        o = s1;
+    } else if (uCh.x < 2.5) {
+        o = s2;
+    } else {
+        o = s3;
+    }
+    o += vec4(uOffset.x, uOffset.y, 0.0, 0.0);
+    fragColor = vec4(clamp(o.rgb, 0.0, 8.0), clamp(o.a, 0.0, 8.0));
+}
+)GLSL";
+
+// ---------------- Video Filter (1280x720) ----------------
+
+const char* FS_VF_DENOISE = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uFrame;
+uniform sampler2D uPrev;
+uniform float uMotion;
+void main() {
+    vec4 c = texture(uFrame, vUV);
+    vec3 sum = vec3(0.0);
+    float wsum = 0.0;
+    for (int y = -2; y <= 2; y++) {
+        for (int x = -2; x <= 2; x++) {
+            vec2 uv2 = vUV + vec2(float(x), float(y)) * 0.0022;
+            vec3 p = texture(uPrev, uv2).rgb;
+            float w = 1.0 - clamp(distance(p, c.rgb) * 1.8, 0.0, 0.95);
+            sum += p * w;
+            wsum += w;
+        }
+    }
+    vec3 avg = sum / max(wsum, 0.0001);
+    float md = clamp(distance(avg, c.rgb) * 2.4, 0.0, 1.0);
+    float wa = mix(0.55, 0.10, md) * uMotion;
+    vec3 o = mix(c.rgb, avg, wa);
+    fragColor = vec4(clamp(o, 0.0, 1.0), 1.0);
+}
+)GLSL";
+
+const char* FS_VF_BLEND = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uA;
+uniform sampler2D uB;
+uniform float uT;
+void main() {
+    vec3 a = texture(uA, vUV).rgb;
+    vec3 b = texture(uB, vUV + vec2(0.0035 * uT, 0.0)).rgb;
+    fragColor = vec4(clamp(mix(a, b, uT), 0.0, 1.0), 1.0);
+}
+)GLSL";
+
+const char* FS_VF_SHARP = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uTex;
+uniform vec2 uTexel;
+void main() {
+    vec3 c = texture(uTex, vUV).rgb;
+    vec3 sum = vec3(0.0);
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            sum += texture(uTex, vUV + vec2(float(x) * uTexel.x, float(y) * uTexel.y)).rgb;
+        }
+    }
+    vec3 blur = sum * 0.1111111;
+    vec3 o = c + (c - blur) * 0.85;
+    fragColor = vec4(clamp(o, 0.0, 1.0), 1.0);
+}
+)GLSL";
+
+const char* FS_VF_GRADE = R"GLSL(#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uTex;
+uniform float uFrame;
+void main() {
+    vec3 c = texture(uTex, vUV).rgb;
+    float l = dot(c, vec3(0.299, 0.587, 0.114));
+    c = mix(vec3(l), c, 1.22);
+    vec3 sh = vec3(0.03, 0.045, 0.085);
+    vec3 hi = vec3(0.065, 0.035, 0.015);
+    c = c + sh * (1.0 - l) + hi * l;
+    c = clamp((c - 0.5) * (1.03 + 0.02 * sin(uFrame * 0.02)) + 0.5, 0.0, 1.0);
+    float v = 1.0 - dot(vUV - vec2(0.5), vUV - vec2(0.5)) * 0.35;
+    fragColor = vec4(clamp(c * v, 0.0, 1.0), 1.0);
+}
+)GLSL";
